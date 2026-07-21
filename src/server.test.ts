@@ -14,14 +14,26 @@ test("expone ocho tools anotadas y ejecuta un mapeo sin acceso externo", async (
   try {
     const listed = await client.listTools();
     assert.equal(listed.tools.length, 8);
-    assert.ok(listed.tools.every((tool) => tool.name.startsWith("aiquaa_")));
+    assert.deepEqual(
+      listed.tools.map((tool) => tool.name).sort(),
+      [
+        "qa_bdd",
+        "qa_cobertura",
+        "qa_contexto",
+        "qa_mapear",
+        "qa_memoria",
+        "qa_pruebas",
+        "qa_recordar",
+        "qa_reglas",
+      ],
+    );
     assert.equal(
-      listed.tools.find((tool) => tool.name === "aiquaa_save_project_memory")?.annotations?.readOnlyHint,
+      listed.tools.find((tool) => tool.name === "qa_recordar")?.annotations?.readOnlyHint,
       false,
     );
 
     const result = await client.callTool({
-      name: "aiquaa_map_scenarios_to_rules",
+      name: "qa_mapear",
       arguments: {
         feature_contents: [
           "Feature: Pago\nScenario: Pago aprobado\nGiven una compra\nWhen se aprueba\nThen se confirma",
@@ -35,7 +47,7 @@ test("expone ocho tools anotadas y ejecuta un mapeo sin acceso externo", async (
     assert.match(JSON.stringify(result.structuredContent), /RN-014/);
 
     const generated = await client.callTool({
-      name: "aiquaa_generate_playwright_tests",
+      name: "qa_pruebas",
       arguments: {
         feature_content:
           "Feature: Login\nScenario: Login válido\nGiven el usuario está en la página\nWhen hace clic en \"Ingresar\"\nThen ve \"Inicio\"",
