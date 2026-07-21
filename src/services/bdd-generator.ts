@@ -30,7 +30,7 @@ export function generateBdd(
   const warnings: string[] = [];
   if (rules.length === 0) {
     warnings.push(
-      "No se consultaron o no existen reglas de negocio; usá aiquaa_map_scenarios_to_rules cuando tengas los IDs.",
+      "No se consultaron o no existen reglas de negocio; usá qa_mapear cuando tengas los IDs.",
     );
   } else if (suggestedRules.length === 0) {
     warnings.push("No hubo coincidencias suficientemente claras con reglas existentes; revisá el mapeo manualmente.");

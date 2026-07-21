@@ -21,16 +21,31 @@ El transporte es Streamable HTTP sin estado, recomendado para servidores remotos
 
 | Tool | Función | Acceso externo |
 |---|---|---|
-| `aiquaa_generate_bdd_scenarios` | Genera `.feature` desde texto o `requirement_id`; valida OCR de PDF | Solo al resolver IDs o sugerir reglas |
-| `aiquaa_generate_playwright_tests` | Genera steps, procedencia de selectores, auth, helper externo, reporter, config y CI | Solo con `feature_id` |
-| `aiquaa_list_business_rules` | Lista reglas con filtros y paginación | Sí |
-| `aiquaa_map_scenarios_to_rules` | Agrega `@rule:` y lista reglas no cubiertas | No |
-| `aiquaa_generate_coverage_report` | Cruza JSON Playwright con reglas y desglosa por feature | Evitable con `business_rules` offline |
-| `aiquaa_get_code_context` | Obtiene contexto estructural enfocado desde un índice local CodeGraph | Binario y repositorio montado |
-| `aiquaa_search_project_memory` | Busca decisiones y aprendizajes persistentes del proyecto | Binario local Engram |
-| `aiquaa_save_project_memory` | Guarda o revisa memoria curada por `topic_key` | Binario local Engram |
+| `qa_bdd` | Genera `.feature` desde texto o `requirement_id`; valida OCR de PDF | Solo al resolver IDs o sugerir reglas |
+| `qa_pruebas` | Genera steps, procedencia de selectores, auth, helper externo, reporter, config y CI | Solo con `feature_id` |
+| `qa_reglas` | Lista reglas con filtros y paginación | Sí |
+| `qa_mapear` | Agrega `@rule:` y lista reglas no cubiertas | No |
+| `qa_cobertura` | Cruza JSON Playwright con reglas y desglosa por feature | Evitable con `business_rules` offline |
+| `qa_contexto` | Obtiene contexto estructural enfocado desde un índice local CodeGraph | Binario y repositorio montado |
+| `qa_memoria` | Busca decisiones y aprendizajes persistentes del proyecto | Binario local Engram |
+| `qa_recordar` | Guarda o revisa memoria curada por `topic_key` | Binario local Engram |
 
-Todos los inputs son Zod strict. Las tools de generación devuelven contenido, nunca escriben artefactos ni ejecutan tests. La única escritura nueva es explícita: `aiquaa_save_project_memory` persiste en Engram. Todas declaran `readOnlyHint`, `destructiveHint`, `idempotentHint` y `openWorldHint` de acuerdo con su comportamiento.
+Todos los inputs son Zod strict. Las tools de generación devuelven contenido, nunca escriben artefactos ni ejecutan tests. La única escritura nueva es explícita: `qa_recordar` persiste en Engram. Todas declaran `readOnlyHint`, `destructiveHint`, `idempotentHint` y `openWorldHint` de acuerdo con su comportamiento.
+
+### Migración a v0.2.0
+
+La versión 0.2.0 reemplaza los nombres largos `aiquaa_*` por nombres breves en español bajo el prefijo `qa_`. Es un cambio incompatible deliberado: no se registran aliases antiguos porque duplicar sus schemas aumentaría el contexto y el consumo de tokens.
+
+| v0.1.x | v0.2.0 |
+|---|---|
+| `aiquaa_generate_bdd_scenarios` | `qa_bdd` |
+| `aiquaa_generate_playwright_tests` | `qa_pruebas` |
+| `aiquaa_list_business_rules` | `qa_reglas` |
+| `aiquaa_map_scenarios_to_rules` | `qa_mapear` |
+| `aiquaa_generate_coverage_report` | `qa_cobertura` |
+| `aiquaa_get_code_context` | `qa_contexto` |
+| `aiquaa_search_project_memory` | `qa_memoria` |
+| `aiquaa_save_project_memory` | `qa_recordar` |
 
 ## Requisitos y setup
 
@@ -103,8 +118,8 @@ En Windows, separá varias raíces con `;`; en Linux/macOS, con `:`. La tool eje
 
 Flujo recomendado:
 
-1. Llamar `aiquaa_get_code_context` con una tarea concreta, por ejemplo “localizar el formulario y sus selectores de login”.
-2. Pasar el contexto enfocado a `app_context` de `aiquaa_generate_playwright_tests` y marcar el `selector_source` verificable correspondiente.
+1. Llamar `qa_contexto` con una tarea concreta, por ejemplo “localizar el formulario y sus selectores de login”.
+2. Pasar el contexto enfocado a `app_context` de `qa_pruebas` y marcar el `selector_source` verificable correspondiente.
 
 ### Engram
 
@@ -115,7 +130,7 @@ export ENGRAM_BIN=engram
 export ENGRAM_PROJECT_PREFIX=aiquaa-
 ```
 
-`aiquaa_search_project_memory` fuerza `scope=project`. `aiquaa_save_project_memory` también fuerza ese scope y exige un `topic_key` estable; Engram usa esa clave para revisar la memoria existente en vez de crear duplicados en reintentos. El nombre interno se deriva como `<prefijo><project_id>`, en minúsculas, para aislar proyectos. No se exponen borrado, scope personal ni búsqueda global.
+`qa_memoria` fuerza `scope=project`. `qa_recordar` también fuerza ese scope y exige un `topic_key` estable; Engram usa esa clave para revisar la memoria existente en vez de crear duplicados en reintentos. El nombre interno se deriva como `<prefijo><project_id>`, en minúsculas, para aislar proyectos. No se exponen borrado, scope personal ni búsqueda global.
 
 Guardá contenido curado con esta estructura:
 
@@ -170,7 +185,7 @@ La validación rechaza textos demasiado cortos, con baja proporción alfanuméri
 
 ## Seguridad de selectores y credenciales
 
-`aiquaa_generate_playwright_tests` acepta `selector_source` para registrar de dónde provienen los locators:
+`qa_pruebas` acepta `selector_source` para registrar de dónde provienen los locators:
 
 - `provided_dom`: HTML renderizado inspeccionado.
 - `provided_component`: código React/Vue/Angular u otro componente real.
@@ -187,7 +202,7 @@ La configuración `external_validation` genera un helper de polling para SMS, em
 
 ### 1. Requerimiento → BDD
 
-Invocá `aiquaa_generate_bdd_scenarios`:
+Invocá `qa_bdd`:
 
 ```json
 {
@@ -203,7 +218,7 @@ La respuesta contiene uno o más archivos `features/*.feature`, escenarios posit
 
 ### 2. Mapear reglas
 
-Pasá el feature a `aiquaa_map_scenarios_to_rules` junto con el universo de reglas:
+Pasá el feature a `qa_mapear` junto con el universo de reglas:
 
 ```json
 {
@@ -221,7 +236,7 @@ La salida incluye el feature actualizado y `uncoveredRuleIds`.
 
 ### 3. Feature → Playwright
 
-Invocá `aiquaa_generate_playwright_tests` con el feature mapeado:
+Invocá `qa_pruebas` con el feature mapeado:
 
 ```json
 {
@@ -279,7 +294,7 @@ Ambos ejecutan `bddgen` antes de Playwright, publican JUnit y conservan los repo
 
 ### 4. Resultados → cobertura de reglas
 
-Pasá el JSON estándar de Playwright o el JSON del reporter a `aiquaa_generate_coverage_report`. Para trabajar offline incluí un snapshot:
+Pasá el JSON estándar de Playwright o el JSON del reporter a `qa_cobertura`. Para trabajar offline incluí un snapshot:
 
 ```json
 {

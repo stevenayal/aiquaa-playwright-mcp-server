@@ -66,7 +66,7 @@ const persistentWriteAnnotations = {
 
 export function registerTools(server: McpServer, context: ToolContext): void {
   server.registerTool(
-    "aiquaa_generate_bdd_scenarios",
+    "qa_bdd",
     {
       title: "Generar escenarios BDD de AIQUAA",
       description:
@@ -110,7 +110,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
   );
 
   server.registerTool(
-    "aiquaa_generate_playwright_tests",
+    "qa_pruebas",
     {
       title: "Generar tests Playwright BDD",
       description:
@@ -158,7 +158,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
   );
 
   server.registerTool(
-    "aiquaa_list_business_rules",
+    "qa_reglas",
     {
       title: "Listar reglas de negocio de AIQUAA",
       description: "Lista reglas paginadas de un proyecto AIQUAA con filtros opcionales.",
@@ -179,7 +179,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
   );
 
   server.registerTool(
-    "aiquaa_map_scenarios_to_rules",
+    "qa_mapear",
     {
       title: "Mapear escenarios a reglas",
       description:
@@ -195,7 +195,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
   );
 
   server.registerTool(
-    "aiquaa_generate_coverage_report",
+    "qa_cobertura",
     {
       title: "Generar reporte de cobertura de reglas",
       description:
@@ -221,7 +221,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
   );
 
   server.registerTool(
-    "aiquaa_get_code_context",
+    "qa_contexto",
     {
       title: "Obtener contexto de código con CodeGraph",
       description:
@@ -244,7 +244,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
   );
 
   server.registerTool(
-    "aiquaa_search_project_memory",
+    "qa_memoria",
     {
       title: "Buscar memoria persistente del proyecto",
       description:
@@ -261,7 +261,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
   );
 
   server.registerTool(
-    "aiquaa_save_project_memory",
+    "qa_recordar",
     {
       title: "Guardar memoria persistente del proyecto",
       description:
