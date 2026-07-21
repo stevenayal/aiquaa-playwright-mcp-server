@@ -22,7 +22,7 @@ El transporte es Streamable HTTP sin estado, recomendado para servidores remotos
 | Tool | Función | Acceso externo |
 |---|---|---|
 | `aiquaa_generate_bdd_scenarios` | Genera `.feature` desde texto o `requirement_id`; valida OCR de PDF | Solo al resolver IDs o sugerir reglas |
-| `aiquaa_generate_playwright_tests` | Genera steps, hook de reglas, reporter y config | Solo con `feature_id` |
+| `aiquaa_generate_playwright_tests` | Genera steps, procedencia de selectores, auth, helper externo, reporter, config y CI | Solo con `feature_id` |
 | `aiquaa_list_business_rules` | Lista reglas con filtros y paginación | Sí |
 | `aiquaa_map_scenarios_to_rules` | Agrega `@rule:` y lista reglas no cubiertas | No |
 | `aiquaa_generate_coverage_report` | Cruza JSON Playwright con reglas y desglosa por feature | Evitable con `business_rules` offline |
@@ -90,6 +90,21 @@ El servidor no incluye OCR. Primero extraé el PDF con una herramienta especiali
 
 La validación rechaza textos demasiado cortos, con baja proporción alfanumérica, caracteres de reemplazo, palabras partidas o líneas anormalmente fragmentadas. Es una barrera contra basura obvia, no una garantía semántica: el usuario debe revisar el feature generado.
 
+## Seguridad de selectores y credenciales
+
+`aiquaa_generate_playwright_tests` acepta `selector_source` para registrar de dónde provienen los locators:
+
+- `provided_dom`: HTML renderizado inspeccionado.
+- `provided_component`: código React/Vue/Angular u otro componente real.
+- `provided_test_ids`: inventario confirmado de `data-testid`.
+- `estimated`: inferido únicamente del Gherkin; es el default y genera una advertencia.
+
+Cada step devuelve una entrada en `selectorProvenance`. Si no existe información suficiente para implementar una acción o assertion, el código generado lanza un error `TODO` explícito; nunca produce un falso positivo comprobando solamente que la página existe.
+
+La configuración opcional `auth` genera `features/support/auth.setup.ts` con `storageState`. Solo contiene nombres de variables de entorno: si los secrets faltan, falla con un mensaje accionable y no usa credenciales fallback.
+
+La configuración `external_validation` genera un helper de polling para SMS, email, push o estados de negocio expuestos por una API interna. La URL y el token también se resuelven exclusivamente desde variables de entorno.
+
 ## Ejemplo end-to-end
 
 ### 1. Requerimiento → BDD
@@ -135,11 +150,31 @@ Invocá `aiquaa_generate_playwright_tests` con el feature mapeado:
   "feature_content": "# language: es\nCaracterística: Recuperación...",
   "base_url": "https://staging.example.com",
   "app_context": "El botón de envío se llama Enviar enlace; el campo usa label Correo.",
+  "selector_source": "provided_component",
+  "auth": {
+    "login_path": "/login",
+    "username_label": "Correo",
+    "password_label": "Contraseña",
+    "submit_name": "Ingresar",
+    "success_url_pattern": "dashboard",
+    "username_env": "TEST_USER",
+    "password_env": "TEST_PASSWORD"
+  },
+  "external_validation": {
+    "type": "email",
+    "api_url_env": "NOTIFICATION_API_URL",
+    "api_token_env": "NOTIFICATION_API_TOKEN",
+    "response_field": "data.resetLink",
+    "timeout_ms": 30000,
+    "poll_interval_ms": 2000
+  },
+  "browsers": ["chromium"],
+  "ci_targets": ["github_actions", "azure_pipelines"],
   "response_format": "json"
 }
 ```
 
-Copiá los archivos devueltos. Los steps que no pueden inferirse sin inspeccionar la app llevan un `TODO` visible; no se inventan selectores ocultamente.
+Copiá los archivos devueltos. La respuesta incluye `.github/workflows/playwright.yml` y `azure-pipelines.playwright.yml` cuando se solicitan ambos targets.
 
 En el proyecto de tests:
 
@@ -150,6 +185,19 @@ npx playwright test
 ```
 
 El reporter produce `test-results/aiquaa-rule-results.json`. Puede coexistir con `html` y `json`.
+
+### CI/CD
+
+El repositorio incluye un workflow real para compilar y probar el servidor:
+
+- `.github/workflows/ci.yml`
+
+También incluye ejemplos listos para adaptar en proyectos consumidores:
+
+- `examples/ci/github-actions-playwright.yml`
+- `examples/ci/azure-pipelines-playwright.yml`
+
+Ambos ejecutan `bddgen` antes de Playwright, publican JUnit y conservan los reportes como artifacts. Configurá `BASE_URL` como variable y las credenciales/tokens como secrets del proveedor; nunca los escribas en YAML.
 
 ### 4. Resultados → cobertura de reglas
 
@@ -184,7 +232,7 @@ npm run build
 npm test
 ```
 
-`evaluation.xml` contiene 10 preguntas que prueban generación BDD, rechazo de OCR roto, paginación, generación Playwright, mapeo, formatos de reporter y el pipeline completo.
+`evaluation.xml` contiene 10 preguntas que prueban generación BDD, rechazo de OCR roto, paginación, generación Playwright, mapeo, formatos de reporter y el pipeline completo. Las pruebas automatizadas también parsean los YAML generados y los ejemplos estáticos.
 
 ## Límites deliberados
 

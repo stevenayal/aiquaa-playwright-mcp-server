@@ -1,0 +1,40 @@
+name: Playwright BDD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx bddgen --config playwright.config.aiquaa.ts
+      - name: Run Playwright
+        run: npx playwright test --config playwright.config.aiquaa.ts
+        env:
+          BASE_URL: ${{ vars.BASE_URL }}
+          TEST_USER: ${{ secrets.TEST_USER }}
+          TEST_PASSWORD: ${{ secrets.TEST_PASSWORD }}
+          NOTIFICATION_API_URL: ${{ secrets.NOTIFICATION_API_URL }}
+          NOTIFICATION_API_TOKEN: ${{ secrets.NOTIFICATION_API_TOKEN }}
+      - name: Upload reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-results
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 30

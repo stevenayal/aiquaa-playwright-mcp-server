@@ -102,7 +102,38 @@ export function registerTools(server: McpServer, context: ToolContext): void {
     async (rawInput) => safeToolCall(async () => {
       const input = GeneratePlaywrightInputSchema.parse(rawInput);
       const featureContent = input.feature_content ?? await createClient(context).getFeatureContent(input.feature_id ?? "");
-      const result = generatePlaywrightArtifacts(featureContent, input.base_url, input.app_context);
+      const result = generatePlaywrightArtifacts(featureContent, {
+        ...(input.base_url ? { baseUrl: input.base_url } : {}),
+        ...(input.app_context ? { appContext: input.app_context } : {}),
+        selectorSource: input.selector_source,
+        browsers: input.browsers,
+        ciTargets: input.ci_targets,
+        ...(input.auth
+          ? {
+              auth: {
+                loginPath: input.auth.login_path,
+                usernameLabel: input.auth.username_label,
+                passwordLabel: input.auth.password_label,
+                submitName: input.auth.submit_name,
+                successUrlPattern: input.auth.success_url_pattern,
+                usernameEnv: input.auth.username_env,
+                passwordEnv: input.auth.password_env,
+              },
+            }
+          : {}),
+        ...(input.external_validation
+          ? {
+              externalValidation: {
+                type: input.external_validation.type,
+                apiUrlEnv: input.external_validation.api_url_env,
+                apiTokenEnv: input.external_validation.api_token_env,
+                responseField: input.external_validation.response_field,
+                timeoutMs: input.external_validation.timeout_ms,
+                pollIntervalMs: input.external_validation.poll_interval_ms,
+              },
+            }
+          : {}),
+      });
       return successResult(input.response_format, result, playwrightToMarkdown(result));
     }),
   );
