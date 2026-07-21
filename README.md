@@ -1,0 +1,199 @@
+# aiquaa-playwright-mcp-server
+
+Servidor MCP remoto en TypeScript que **genera** escenarios BDD, definiciones Playwright compatibles con `playwright-bdd`, trazabilidad `@rule:<ID>` y reportes de cobertura de reglas de negocio. No abre navegadores ni ejecuta tests: los artefactos se copian al proyecto Playwright del usuario y se ejecutan allí.
+
+## Investigación y decisión de extensión
+
+La investigación se realizó sobre `playwright-bdd` 9.2.0. Su flujo público convierte `.feature` a tests Playwright nativos con `defineBddConfig` y `bddgen`; las definiciones se registran mediante `createBdd`, y los tags Gherkin llegan a los tests generados. La estructura upstream separa `src/config`, `src/gherkin`, `src/generate`, `src/steps`, `src/runtime` y reporters. Véanse el [repositorio y estructura upstream](https://github.com/vitalets/playwright-bdd), su [documentación de cómo genera tests](https://vitalets.github.io/playwright-bdd/) y el [paquete publicado](https://www.npmjs.com/package/playwright-bdd).
+
+La extensión de AIQUAA se apoya deliberadamente en puntos públicos y no reemplaza el runner:
+
+- `defineBddConfig`/`bddgen` siguen siendo responsables de `.feature → .features-gen/*.spec.js`.
+- Un hook `Before` de `createBdd` toma los tags `@rule:*` preservados por el generador y los agrega a `test.info().annotations` como `business-rule`. Playwright documenta que las anotaciones en runtime quedan disponibles para reporters ([anotaciones](https://playwright.dev/docs/test-annotations), [TestResult.annotations](https://playwright.dev/docs/api/class-testresult)).
+- `AiquaaRuleReporter` implementa la API `Reporter`, agrega resultados por rule ID en `onTestEnd` y escribe un JSON al finalizar, compatible con los reporters estándar ([reporters personalizados](https://playwright.dev/docs/test-reporters)).
+- El servidor genera steps y configuración para el paquete upstream/fork sin modificar su generación estándar. Las extensiones también se exportan como `aiquaa-playwright-mcp-server/rule-tags` y `aiquaa-playwright-mcp-server/rule-reporter`, de modo que un fork corporativo puede incorporarlas directamente.
+
+Este diseño es la capa mantenible del fork: el código específico de AIQUAA queda aislado de los internals de `playwright-bdd`, conservando compatibilidad con nuevas versiones. Si AIQUAA publica un fork npm propio, basta reemplazar el import `playwright-bdd` por el nombre de ese paquete; no cambia el contrato MCP.
+
+El transporte es Streamable HTTP sin estado, recomendado para servidores remotos por la [guía oficial del SDK TypeScript](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/server.md). Cada POST crea contexto aislado y puede hacer passthrough del Bearer JWT de esa solicitud.
+
+## Tools
+
+| Tool | Función | Acceso externo |
+|---|---|---|
+| `aiquaa_generate_bdd_scenarios` | Genera `.feature` desde texto o `requirement_id`; valida OCR de PDF | Solo al resolver IDs o sugerir reglas |
+| `aiquaa_generate_playwright_tests` | Genera steps, hook de reglas, reporter y config | Solo con `feature_id` |
+| `aiquaa_list_business_rules` | Lista reglas con filtros y paginación | Sí |
+| `aiquaa_map_scenarios_to_rules` | Agrega `@rule:` y lista reglas no cubiertas | No |
+| `aiquaa_generate_coverage_report` | Cruza JSON Playwright con reglas y desglosa por feature | Evitable con `business_rules` offline |
+
+Todos los inputs son Zod strict. Las tools son read-only respecto del entorno: devuelven contenido, nunca escriben artefactos ni ejecutan tests. Declaran `readOnlyHint`, `destructiveHint`, `idempotentHint` y `openWorldHint`.
+
+## Requisitos y setup
+
+- Node.js 20 o superior.
+- Un backend AIQUAA accesible solo para operaciones remotas.
+- Un JWT de Supabase Auth válido.
+
+```bash
+npm install
+cp .env.example .env
+npm run build
+npm start
+```
+
+PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+$env:AIQUAA_API_BASE_URL="https://api.example.aiquaa.com"
+$env:AIQUAA_ACCESS_TOKEN="<jwt-supabase>"
+npm run build
+npm start
+```
+
+El endpoint MCP queda en `http://localhost:3000/mcp` y el health check en `http://localhost:3000/health`. `PORT` y `MCP_PATH` son configurables.
+
+### Autenticación
+
+En desarrollo, `AIQUAA_ACCESS_TOKEN` es el fallback. En producción, enviá por cada request MCP:
+
+```http
+Authorization: Bearer <supabase-jwt-del-usuario>
+```
+
+El token de la solicitud tiene precedencia y se usa solo en ese contexto. Si falta, los errores indican exactamente qué variable/header configurar. Nunca se registra el token.
+
+## Contratos AIQUAA pendientes de confirmar
+
+El repositorio recibido no contiene el backend NestJS ni su OpenAPI. Por eso estas rutas son placeholders centralizados en `src/constants.ts`:
+
+| Uso | Ruta asumida | Forma aceptada |
+|---|---|---|
+| Listar reglas | `GET /projects/:projectId/business-rules?page=&pageSize=&query=&status=&priority=` | `{ items, page, pageSize, total, totalPages }` o `{ data, ... }` |
+| Obtener requerimiento | `GET /projects/:projectId/requirements/:requirementId` | `text`, `content`, `requirementText` o `description` |
+| Obtener feature | `GET /features/:featureId` | `content`, `gherkin` o `featureContent` |
+
+Antes de producción, sustituí las rutas por los endpoints reales y agregá contract tests contra el OpenAPI de AIQUAA. El cliente HTTP está centralizado en `src/services/aiquaa-client.ts` para que el cambio sea local.
+
+## Guardrail de PDF/OCR
+
+El servidor no incluye OCR. Primero extraé el PDF con una herramienta especializada y enviá:
+
+```json
+{
+  "requirement_text": "texto extraído...",
+  "requirement_source": "extracted_from_pdf",
+  "project_id": "prj_123"
+}
+```
+
+La validación rechaza textos demasiado cortos, con baja proporción alfanumérica, caracteres de reemplazo, palabras partidas o líneas anormalmente fragmentadas. Es una barrera contra basura obvia, no una garantía semántica: el usuario debe revisar el feature generado.
+
+## Ejemplo end-to-end
+
+### 1. Requerimiento → BDD
+
+Invocá `aiquaa_generate_bdd_scenarios`:
+
+```json
+{
+  "requirement_text": "Como cliente registrado quiero recuperar mi contraseña por correo para volver a acceder de forma segura sin contactar a soporte.",
+  "requirement_source": "typed",
+  "project_id": "prj_checkout",
+  "language": "es",
+  "response_format": "json"
+}
+```
+
+La respuesta contiene uno o más archivos `features/*.feature`, escenarios positivo/validación/error y sugerencias de rule IDs si AIQUAA está configurado.
+
+### 2. Mapear reglas
+
+Pasá el feature a `aiquaa_map_scenarios_to_rules` junto con el universo de reglas:
+
+```json
+{
+  "feature_contents": ["# language: es\nCaracterística: Recuperación..."],
+  "rule_ids": ["RN-014", "RN-015", "RN-016"],
+  "assignments": [
+    { "scenario": "Flujo exitoso", "rule_ids": ["RN-014"] },
+    { "scenario": "Validación de datos obligatorios", "rule_ids": ["RN-015"] }
+  ],
+  "response_format": "markdown"
+}
+```
+
+La salida incluye el feature actualizado y `uncoveredRuleIds`.
+
+### 3. Feature → Playwright
+
+Invocá `aiquaa_generate_playwright_tests` con el feature mapeado:
+
+```json
+{
+  "feature_content": "# language: es\nCaracterística: Recuperación...",
+  "base_url": "https://staging.example.com",
+  "app_context": "El botón de envío se llama Enviar enlace; el campo usa label Correo.",
+  "response_format": "json"
+}
+```
+
+Copiá los archivos devueltos. Los steps que no pueden inferirse sin inspeccionar la app llevan un `TODO` visible; no se inventan selectores ocultamente.
+
+En el proyecto de tests:
+
+```bash
+npm install -D @playwright/test playwright-bdd aiquaa-playwright-mcp-server
+npx bddgen
+npx playwright test
+```
+
+El reporter produce `test-results/aiquaa-rule-results.json`. Puede coexistir con `html` y `json`.
+
+### 4. Resultados → cobertura de reglas
+
+Pasá el JSON estándar de Playwright o el JSON del reporter a `aiquaa_generate_coverage_report`. Para trabajar offline incluí un snapshot:
+
+```json
+{
+  "project_id": "prj_checkout",
+  "playwright_results": {
+    "businessRuleCoverage": {
+      "rules": [
+        { "ruleId": "RN-014", "tests": [{ "title": "Flujo exitoso", "feature": "Recuperación", "status": "passed" }] },
+        { "ruleId": "RN-015", "tests": [{ "title": "Validación", "feature": "Recuperación", "status": "failed" }] }
+      ]
+    }
+  },
+  "business_rules": [
+    { "id": "RN-014", "title": "Recuperación autenticada", "description": "" },
+    { "id": "RN-015", "title": "Validación de correo", "description": "" },
+    { "id": "RN-016", "title": "Límite de intentos", "description": "" }
+  ],
+  "response_format": "markdown"
+}
+```
+
+El reporte diferencia `passed`, `failing`, `not_run` y `uncovered`, calcula el porcentaje sobre todas las reglas registradas y desglosa por feature.
+
+## Desarrollo y verificación
+
+```bash
+npm run build
+npm test
+```
+
+`evaluation.xml` contiene 10 preguntas que prueban generación BDD, rechazo de OCR roto, paginación, generación Playwright, mapeo, formatos de reporter y el pipeline completo.
+
+## Límites deliberados
+
+- No OCR, browser automation ni ejecución de tests dentro del servidor.
+- La generación determinista entrega una base revisable; no pretende conocer el DOM de la app.
+- La sugerencia automática de reglas usa similitud léxica y se marca como sugerencia.
+- No persiste features ni resultados; los IDs se resuelven en AIQUAA cuando se proveen.
+- Los resultados de cobertura reflejan reglas registradas/suministradas; una regla omitida del snapshot no puede contarse como no cubierta.
+
+## Licencia
+
+MIT. `playwright-bdd` mantiene su propia licencia MIT y Playwright su licencia Apache-2.0.

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<evaluations server="aiquaa-playwright-mcp-server" version="1.0">
+  <evaluation id="1">
+    <question>Generá escenarios BDD en español para el proyecto prj-demo a partir de: “Como cliente registrado quiero recuperar mi contraseña por correo para volver a acceder sin contactar a soporte”. Devolvé JSON.</question>
+    <expected_tools><tool>aiquaa_generate_bdd_scenarios</tool></expected_tools>
+    <criteria>Produce Gherkin válido, al menos flujo exitoso y validaciones, y no intenta ejecutar tests.</criteria>
+  </evaluation>
+  <evaluation id="2">
+    <question>El siguiente texto fue extraído de PDF: “A�\nb�\n□□□”. Intentá generar BDD para prj-demo.</question>
+    <expected_tools><tool>aiquaa_generate_bdd_scenarios</tool></expected_tools>
+    <criteria>Usa requirement_source extracted_from_pdf, rechaza el OCR defectuoso y devuelve un error accionable sin escenarios.</criteria>
+  </evaluation>
+  <evaluation id="3">
+    <question>Listá la primera página de 10 reglas activas y de prioridad alta del proyecto prj-demo, en Markdown.</question>
+    <expected_tools><tool>aiquaa_list_business_rules</tool></expected_tools>
+    <criteria>Aplica proyecto, filtros, paginación y response_format correctos; explica claramente un token ausente o vencido.</criteria>
+  </evaluation>
+  <evaluation id="4">
+    <question>Generá definiciones Playwright TypeScript para este feature: “Feature: Login\nScenario: Login válido\nGiven el usuario está en login\nWhen hace clic en &quot;Ingresar&quot;\nThen ve &quot;Inicio&quot;”, con base_url https://staging.example.com.</question>
+    <expected_tools><tool>aiquaa_generate_playwright_tests</tool></expected_tools>
+    <criteria>Devuelve steps, hook de @rule, reporter y configuración de playwright-bdd; no ejecuta el navegador.</criteria>
+  </evaluation>
+  <evaluation id="5">
+    <question>Mapeá los escenarios “Compra aprobada” y “Compra rechazada” a RN-014 y RN-015 respectivamente, y avisá si RN-016 queda sin cobertura.</question>
+    <expected_tools><tool>aiquaa_map_scenarios_to_rules</tool></expected_tools>
+    <criteria>Inserta tags sin duplicarlos, conserva el Gherkin y reporta RN-016 como no cubierta.</criteria>
+  </evaluation>
+  <evaluation id="6">
+    <question>Generá un reporte JSON para prj-demo con un Playwright JSON que tenga un test passed anotado business-rule=RN-014 y un test failed anotado business-rule=RN-015. Usá un snapshot offline de esas dos reglas.</question>
+    <expected_tools><tool>aiquaa_generate_coverage_report</tool></expected_tools>
+    <criteria>Calcula 100% cubierto, una regla passing y otra failing, con desglose por feature.</criteria>
+  </evaluation>
+  <evaluation id="7">
+    <question>Generá un reporte Markdown usando la salida de aiquaa-rule-reporter donde RN-020 tiene solo tests skipped y RN-021 no tiene tests.</question>
+    <expected_tools><tool>aiquaa_generate_coverage_report</tool></expected_tools>
+    <criteria>Distingue not_run de uncovered y no confunde tests saltados con tests pasando.</criteria>
+  </evaluation>
+  <evaluation id="8">
+    <question>Partí del requerimiento REQ-102 de prj-demo, sugerí reglas existentes y devolvé los features en Markdown.</question>
+    <expected_tools><tool>aiquaa_generate_bdd_scenarios</tool><tool>aiquaa_list_business_rules</tool></expected_tools>
+    <criteria>Resuelve el requerimiento por backend con Bearer JWT, sugiere reglas y da errores de configuración accionables.</criteria>
+  </evaluation>
+  <evaluation id="9">
+    <question>Completá el pipeline para una historia de checkout: generá BDD, mapeá RN-030/RN-031 y generá los artefactos Playwright, sin correrlos.</question>
+    <expected_tools><tool>aiquaa_generate_bdd_scenarios</tool><tool>aiquaa_map_scenarios_to_rules</tool><tool>aiquaa_generate_playwright_tests</tool></expected_tools>
+    <criteria>Encadena correctamente outputs e inputs, preserva tags y entrega archivos pegables sin afirmar que los ejecutó.</criteria>
+  </evaluation>
+  <evaluation id="10">
+    <question>Cerrá el pipeline anterior con resultados Playwright: RN-030 pasó y RN-031 falló; además AIQUAA contiene RN-032 sin test. Generá el reporte final.</question>
+    <expected_tools><tool>aiquaa_generate_coverage_report</tool></expected_tools>
+    <criteria>Reporta 66.67% de reglas cubiertas, RN-031 failing, RN-032 uncovered y desglose por feature.</criteria>
+  </evaluation>
+</evaluations>
