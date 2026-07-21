@@ -4,10 +4,13 @@ import {
   GenerateBddInputObjectSchema,
   GenerateBddInputSchema,
   GenerateCoverageReportInputSchema,
+  GetCodeContextInputSchema,
   GeneratePlaywrightInputObjectSchema,
   GeneratePlaywrightInputSchema,
   ListBusinessRulesInputSchema,
   MapScenariosInputSchema,
+  SaveProjectMemoryInputSchema,
+  SearchProjectMemoryInputSchema,
 } from "../schemas/tools.js";
 import type { BusinessRule, ResponseFormat } from "../types.js";
 import { AiquaaClient } from "../services/aiquaa-client.js";
@@ -26,6 +29,8 @@ import {
 import { validateExtractedPdfText } from "../services/pdf-text-validator.js";
 import { generatePlaywrightArtifacts } from "../services/playwright-generator.js";
 import { mapScenariosToRules } from "../services/scenario-mapper.js";
+import { CodeGraphClient } from "../services/codegraph-client.js";
+import { EngramClient } from "../services/engram-client.js";
 
 export interface ToolContext {
   accessToken?: string;
@@ -43,6 +48,20 @@ const remoteReadAnnotations = {
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: true,
+} as const;
+
+const localReadAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+} as const;
+
+const persistentWriteAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
 } as const;
 
 export function registerTools(server: McpServer, context: ToolContext): void {
@@ -198,6 +217,69 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       const tests = parsePlaywrightResults(input.playwright_results);
       const result = buildCoverageReport(input.project_id, rules, tests);
       return successResult(input.response_format, result, coverageReportToMarkdown(result));
+    }),
+  );
+
+  server.registerTool(
+    "aiquaa_get_code_context",
+    {
+      title: "Obtener contexto de código con CodeGraph",
+      description:
+        "Construye contexto estructural enfocado desde un repositorio local indexado por CodeGraph. Requiere CODEGRAPH_ALLOWED_ROOTS y codegraph init previo.",
+      inputSchema: GetCodeContextInputSchema.shape,
+      annotations: localReadAnnotations,
+    },
+    async (rawInput) => safeToolCall(async () => {
+      const input = GetCodeContextInputSchema.parse(rawInput);
+      const result = await new CodeGraphClient().buildContext({
+        projectPath: input.project_path,
+        task: input.task,
+        maxNodes: input.max_nodes,
+        maxCodeBlocks: input.max_code_blocks,
+        includeCode: input.include_code,
+      });
+      const markdown = ["# Contexto estructural (CodeGraph)", "", result.context].join("\n");
+      return successResult(input.response_format, result, markdown);
+    }),
+  );
+
+  server.registerTool(
+    "aiquaa_search_project_memory",
+    {
+      title: "Buscar memoria persistente del proyecto",
+      description:
+        "Recupera decisiones, patrones y aprendizajes persistidos en Engram, siempre limitados al project_id indicado.",
+      inputSchema: SearchProjectMemoryInputSchema.shape,
+      annotations: localReadAnnotations,
+    },
+    async (rawInput) => safeToolCall(async () => {
+      const input = SearchProjectMemoryInputSchema.parse(rawInput);
+      const result = await new EngramClient().search(input.project_id, input.query, input.limit);
+      const markdown = ["# Memoria del proyecto (Engram)", "", result.memories].join("\n");
+      return successResult(input.response_format, result, markdown);
+    }),
+  );
+
+  server.registerTool(
+    "aiquaa_save_project_memory",
+    {
+      title: "Guardar memoria persistente del proyecto",
+      description:
+        "Guarda o revisa una memoria curada en Engram. topic_key hace idempotentes los reintentos y scope queda fijado a project.",
+      inputSchema: SaveProjectMemoryInputSchema.shape,
+      annotations: persistentWriteAnnotations,
+    },
+    async (rawInput) => safeToolCall(async () => {
+      const input = SaveProjectMemoryInputSchema.parse(rawInput);
+      const result = await new EngramClient().save({
+        projectId: input.project_id,
+        title: input.title,
+        content: input.content,
+        type: input.type,
+        topicKey: input.topic_key,
+      });
+      const markdown = ["# Memoria guardada (Engram)", "", result.status].join("\n");
+      return successResult(input.response_format, result, markdown);
     }),
   );
 }

@@ -26,8 +26,11 @@ El transporte es Streamable HTTP sin estado, recomendado para servidores remotos
 | `aiquaa_list_business_rules` | Lista reglas con filtros y paginación | Sí |
 | `aiquaa_map_scenarios_to_rules` | Agrega `@rule:` y lista reglas no cubiertas | No |
 | `aiquaa_generate_coverage_report` | Cruza JSON Playwright con reglas y desglosa por feature | Evitable con `business_rules` offline |
+| `aiquaa_get_code_context` | Obtiene contexto estructural enfocado desde un índice local CodeGraph | Binario y repositorio montado |
+| `aiquaa_search_project_memory` | Busca decisiones y aprendizajes persistentes del proyecto | Binario local Engram |
+| `aiquaa_save_project_memory` | Guarda o revisa memoria curada por `topic_key` | Binario local Engram |
 
-Todos los inputs son Zod strict. Las tools son read-only respecto del entorno: devuelven contenido, nunca escriben artefactos ni ejecutan tests. Declaran `readOnlyHint`, `destructiveHint`, `idempotentHint` y `openWorldHint`.
+Todos los inputs son Zod strict. Las tools de generación devuelven contenido, nunca escriben artefactos ni ejecutan tests. La única escritura nueva es explícita: `aiquaa_save_project_memory` persiste en Engram. Todas declaran `readOnlyHint`, `destructiveHint`, `idempotentHint` y `openWorldHint` de acuerdo con su comportamiento.
 
 ## Requisitos y setup
 
@@ -53,6 +56,54 @@ npm start
 ```
 
 El endpoint MCP queda en `http://localhost:3000/mcp` y el health check en `http://localhost:3000/health`. `PORT` y `MCP_PATH` son configurables.
+
+## Contexto eficiente y memoria persistente
+
+La integración toma dos ideas complementarias de [CodeGraph](https://github.com/stevenayal/codegraph) y [Engram](https://github.com/stevenayal/engram): recuperar solamente los símbolos relevantes antes de generar código y conservar decisiones curadas entre sesiones. CodeGraph puede bajar llamadas de exploración y tokens cuando el servidor comparte filesystem con el repositorio; no aporta ese beneficio si el MCP remoto no puede ver el proyecto. Engram persiste en SQLite y evita volver a descubrir decisiones, pero conviene guardar conclusiones útiles, no cada llamada de herramienta.
+
+Ambas integraciones son opcionales. Sin los binarios o sus variables, las cinco tools originales continúan disponibles.
+
+### CodeGraph
+
+Instalá el CLI, inicializá cada repositorio permitido y exponé solamente raíces confiables:
+
+```bash
+npm install -g @colbymchenry/codegraph
+cd /workspace/projects/checkout
+codegraph init -i
+
+export CODEGRAPH_BIN=codegraph
+export CODEGRAPH_ALLOWED_ROOTS=/workspace/projects
+```
+
+En Windows, separá varias raíces con `;`; en Linux/macOS, con `:`. La tool ejecuta `codegraph context` sin shell, limita nodos/bloques de código y rechaza cualquier `project_path` fuera de `CODEGRAPH_ALLOWED_ROOTS`. En despliegues remotos, montá los repositorios como volúmenes de solo lectura cuando sea posible.
+
+Flujo recomendado:
+
+1. Llamar `aiquaa_get_code_context` con una tarea concreta, por ejemplo “localizar el formulario y sus selectores de login”.
+2. Pasar el contexto enfocado a `app_context` de `aiquaa_generate_playwright_tests` y marcar el `selector_source` verificable correspondiente.
+
+### Engram
+
+Instalá el binario según la [guía de Engram](https://github.com/stevenayal/engram/blob/main/docs/INSTALLATION.md) y configurá:
+
+```bash
+export ENGRAM_BIN=engram
+export ENGRAM_PROJECT_PREFIX=aiquaa-
+```
+
+`aiquaa_search_project_memory` fuerza `scope=project`. `aiquaa_save_project_memory` también fuerza ese scope y exige un `topic_key` estable; Engram usa esa clave para revisar la memoria existente en vez de crear duplicados en reintentos. El nombre interno se deriva como `<prefijo><project_id>`, en minúsculas, para aislar proyectos. No se exponen borrado, scope personal ni búsqueda global.
+
+Guardá contenido curado con esta estructura:
+
+```text
+What: se eligió getByRole para acciones primarias.
+Why: conserva semántica accesible y evita selectores CSS frágiles.
+Where: features/steps/login.steps.ts.
+Learned: data-testid queda reservado para controles sin nombre accesible estable.
+```
+
+En contenedores, montá el directorio de datos de Engram como volumen persistente. En runners CI efímeros, la memoria solo sobrevive si ese directorio se restaura desde un cache o volumen confiable; no publiques la base como artifact porque puede contener contexto sensible.
 
 ### Autenticación
 
