@@ -50,4 +50,19 @@
     <expected_tools><tool>aiquaa_generate_coverage_report</tool></expected_tools>
     <criteria>Reporta 66.67% de reglas cubiertas, RN-031 failing, RN-032 uncovered y desglose por feature.</criteria>
   </evaluation>
+  <evaluation id="11">
+    <question>Obtené contexto estructural para localizar los selectores del login en el repositorio montado /workspace/projects/checkout, con un máximo de 10 nodos.</question>
+    <expected_tools><tool>aiquaa_get_code_context</tool></expected_tools>
+    <criteria>Usa CodeGraph con una tarea enfocada, respeta los límites y rechaza rutas fuera de CODEGRAPH_ALLOWED_ROOTS.</criteria>
+  </evaluation>
+  <evaluation id="12">
+    <question>Buscá en la memoria del proyecto prj-checkout qué decisión se tomó sobre selectores Playwright.</question>
+    <expected_tools><tool>aiquaa_search_project_memory</tool></expected_tools>
+    <criteria>Consulta Engram únicamente con scope project y sin búsqueda global o personal.</criteria>
+  </evaluation>
+  <evaluation id="13">
+    <question>Guardá para prj-checkout la decisión de usar getByRole como locator principal, bajo el topic decision/playwright-selectors.</question>
+    <expected_tools><tool>aiquaa_save_project_memory</tool></expected_tools>
+    <criteria>Persiste una memoria curada con topic_key estable, scope project y tipo decision.</criteria>
+  </evaluation>
 </evaluations>

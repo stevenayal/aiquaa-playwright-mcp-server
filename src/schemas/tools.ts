@@ -207,6 +207,47 @@ export const GenerateCoverageReportInputSchema = z
   })
   .strict();
 
+export const GetCodeContextInputSchema = z
+  .object({
+    project_path: z.string().min(1).describe("Ruta absoluta del repositorio montado junto al servidor."),
+    task: z.string().min(3).max(1_000).describe("Tarea concreta para construir contexto estructural enfocado."),
+    max_nodes: z.number().int().min(1).max(50).default(15),
+    max_code_blocks: z.number().int().min(0).max(20).default(6),
+    include_code: z.boolean().default(true),
+    response_format: ResponseFormatSchema,
+  })
+  .strict();
+
+export const SearchProjectMemoryInputSchema = z
+  .object({
+    project_id: z.string().min(1).describe("ID que aísla la memoria del proyecto."),
+    query: z.string().min(2).max(500).describe("Decisión, patrón o problema a recuperar."),
+    limit: z.number().int().min(1).max(20).default(5),
+    response_format: ResponseFormatSchema,
+  })
+  .strict();
+
+export const SaveProjectMemoryInputSchema = z
+  .object({
+    project_id: z.string().min(1).describe("ID que aísla la memoria del proyecto."),
+    title: z.string().min(3).max(200),
+    content: z
+      .string()
+      .min(10)
+      .max(20_000)
+      .describe("Memoria curada: qué ocurrió, por qué, dónde aplica y qué se aprendió."),
+    type: z
+      .enum(["decision", "architecture", "bugfix", "pattern", "config", "discovery", "learning"])
+      .default("learning"),
+    topic_key: z
+      .string()
+      .min(3)
+      .max(200)
+      .regex(/^[a-z0-9][a-z0-9._/-]*$/, "Usá una clave estable en minúsculas, por ejemplo decision/selectors."),
+    response_format: ResponseFormatSchema,
+  })
+  .strict();
+
 export type GenerateBddInput = z.infer<typeof GenerateBddInputSchema>;
 export type GeneratePlaywrightInput = z.infer<typeof GeneratePlaywrightInputSchema>;
 export type ListBusinessRulesInput = z.infer<typeof ListBusinessRulesInputSchema>;

@@ -21,7 +21,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "npm run build && node --watch dist/index.js",
-    "test": "npm run build && node --test dist/services/pdf-text-validator.test.js dist/services/scenario-mapper.test.js dist/services/coverage-report.test.js dist/services/playwright-generator.test.js dist/server.test.js",
+    "test": "npm run build && node --test dist/services/pdf-text-validator.test.js dist/services/scenario-mapper.test.js dist/services/coverage-report.test.js dist/services/playwright-generator.test.js dist/services/context-integrations.test.js dist/server.test.js",
     "check": "npm run build && npm test"
   },
   "engines": {
