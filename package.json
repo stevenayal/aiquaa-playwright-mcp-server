@@ -2,6 +2,23 @@
   "name": "aiquaa-playwright-mcp-server",
   "version": "0.1.0",
   "description": "MCP server that generates AIQUAA BDD and Playwright artifacts with business-rule traceability.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "playwright",
+    "playwright-bdd",
+    "gherkin",
+    "testing",
+    "aiquaa"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stevenayal/aiquaa-playwright-mcp-server.git"
+  },
+  "homepage": "https://github.com/stevenayal/aiquaa-playwright-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/stevenayal/aiquaa-playwright-mcp-server/issues"
+  },
   "type": "module",
   "bin": {
     "aiquaa-playwright-mcp-server": "dist/index.js"
@@ -13,6 +30,7 @@
   },
   "files": [
     "dist",
+    "!dist/**/*.test.*",
     "examples",
     "README.md",
     "evaluation.xml"
@@ -21,6 +39,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "npm run build && node --watch dist/index.js",
+    "prepack": "npm run build",
     "test": "npm run build && node --test dist/services/pdf-text-validator.test.js dist/services/scenario-mapper.test.js dist/services/coverage-report.test.js dist/services/playwright-generator.test.js dist/services/context-integrations.test.js dist/server.test.js",
     "check": "npm run build && npm test"
   },
@@ -53,6 +72,9 @@
   "overrides": {
     "iconv-lite": "0.7.2",
     "range-parser": "1.2.1"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "license": "MIT"
 }

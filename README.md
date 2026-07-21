@@ -57,6 +57,29 @@ npm start
 
 El endpoint MCP queda en `http://localhost:3000/mcp` y el health check en `http://localhost:3000/health`. `PORT` y `MCP_PATH` son configurables.
 
+### Instalación desde npm
+
+La versión estable se publica como [`aiquaa-playwright-mcp-server`](https://www.npmjs.com/package/aiquaa-playwright-mcp-server):
+
+```bash
+npm install aiquaa-playwright-mcp-server
+npx aiquaa-playwright-mcp-server
+```
+
+### Publicación segura en npm
+
+`.github/workflows/publish-npm.yml` publica cada GitHub Release mediante npm Trusted Publishing (OIDC). No usa `NPM_TOKEN` ni secretos persistentes y verifica que el tag `vX.Y.Z` coincida con la versión de `package.json` antes de publicar.
+
+La vinculación se configura una sola vez en npm, dentro de **Package settings → Trusted Publisher**:
+
+- Provider: GitHub Actions.
+- Organization or user: `stevenayal`.
+- Repository: `aiquaa-playwright-mcp-server`.
+- Workflow filename: `publish-npm.yml`.
+- Allowed action: `npm publish`.
+
+Las releases futuras deben incrementar la versión, mergear el cambio en `main` y publicar una GitHub Release con el tag correspondiente. npm genera automáticamente la attestación de procedencia para este repositorio público.
+
 ## Contexto eficiente y memoria persistente
 
 La integración toma dos ideas complementarias de [CodeGraph](https://github.com/stevenayal/codegraph) y [Engram](https://github.com/stevenayal/engram): recuperar solamente los símbolos relevantes antes de generar código y conservar decisiones curadas entre sesiones. CodeGraph puede bajar llamadas de exploración y tokens cuando el servidor comparte filesystem con el repositorio; no aporta ese beneficio si el MCP remoto no puede ver el proyecto. Engram persiste en SQLite y evita volver a descubrir decisiones, pero conviene guardar conclusiones útiles, no cada llamada de herramienta.
@@ -287,7 +310,7 @@ npm run build
 npm test
 ```
 
-`evaluation.xml` contiene 10 preguntas que prueban generación BDD, rechazo de OCR roto, paginación, generación Playwright, mapeo, formatos de reporter y el pipeline completo. Las pruebas automatizadas también parsean los YAML generados y los ejemplos estáticos.
+`evaluation.xml` contiene 13 preguntas que prueban generación BDD, rechazo de OCR roto, paginación, generación Playwright, mapeo, formatos de reporter, contexto CodeGraph, memoria Engram y el pipeline completo. Las pruebas automatizadas también parsean los YAML generados y los ejemplos estáticos.
 
 ## Límites deliberados
 
