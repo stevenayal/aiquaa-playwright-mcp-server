@@ -35,8 +35,8 @@ Todos los inputs son Zod strict. Las tools de generación devuelven contenido, n
 ## Requisitos y setup
 
 - Node.js 20 o superior.
-- Un backend AIQUAA accesible solo para operaciones remotas.
-- Un JWT de Supabase Auth válido.
+- Para las operaciones remotas: un backend AIQUAA accesible y un Bearer token válido aceptado por ese backend.
+- Para generación offline, CodeGraph y Engram no se requieren `AIQUAA_API_BASE_URL` ni `AIQUAA_ACCESS_TOKEN`.
 
 ```bash
 npm install
@@ -107,13 +107,17 @@ En contenedores, montá el directorio de datos de Engram como volumen persistent
 
 ### Autenticación
 
+La autenticación AIQUAA se aplica únicamente cuando una tool consulta el backend: resolver `requirement_id` o `feature_id`, listar reglas o generar cobertura sin un snapshot offline. No se exige para generación desde texto, mapeo local, CodeGraph ni Engram.
+
 En desarrollo, `AIQUAA_ACCESS_TOKEN` es el fallback. En producción, enviá por cada request MCP:
 
 ```http
 Authorization: Bearer <supabase-jwt-del-usuario>
 ```
 
-El token de la solicitud tiene precedencia y se usa solo en ese contexto. Si falta, los errores indican exactamente qué variable/header configurar. Nunca se registra el token.
+El token de la solicitud tiene precedencia y se usa solo en ese contexto. Si falta, únicamente fallará la operación remota que lo necesite; los errores indican exactamente qué variable/header configurar. Nunca se registra el token.
+
+No se recomienda permitir llamadas anónimas al backend AIQUAA. Si el endpoint MCP se publica en Internet, el passthrough del Bearer protege las llamadas al backend, pero no sustituye la autenticación y autorización del propio endpoint MCP en el proxy o gateway de entrada.
 
 ## Contratos AIQUAA pendientes de confirmar
 
