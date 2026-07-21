@@ -5,7 +5,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { createAiquaaMcpServer } from "./server.js";
 
-test("expone cinco tools anotadas y ejecuta un mapeo sin acceso externo", async () => {
+test("expone ocho tools anotadas y ejecuta un mapeo sin acceso externo", async () => {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const server = createAiquaaMcpServer();
   const client = new Client({ name: "integration-test", version: "1.0.0" });
@@ -13,9 +13,12 @@ test("expone cinco tools anotadas y ejecuta un mapeo sin acceso externo", async 
   await client.connect(clientTransport as unknown as Transport);
   try {
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 5);
+    assert.equal(listed.tools.length, 8);
     assert.ok(listed.tools.every((tool) => tool.name.startsWith("aiquaa_")));
-    assert.ok(listed.tools.every((tool) => tool.annotations?.readOnlyHint === true));
+    assert.equal(
+      listed.tools.find((tool) => tool.name === "aiquaa_save_project_memory")?.annotations?.readOnlyHint,
+      false,
+    );
 
     const result = await client.callTool({
       name: "aiquaa_map_scenarios_to_rules",
