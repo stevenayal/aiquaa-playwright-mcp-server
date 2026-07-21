@@ -18,7 +18,7 @@
   <evaluation id="4">
     <question>Generá definiciones Playwright TypeScript para este feature: “Feature: Login\nScenario: Login válido\nGiven el usuario está en login\nWhen hace clic en &quot;Ingresar&quot;\nThen ve &quot;Inicio&quot;”, con base_url https://staging.example.com.</question>
     <expected_tools><tool>aiquaa_generate_playwright_tests</tool></expected_tools>
-    <criteria>Devuelve steps, hook de @rule, reporter y configuración de playwright-bdd; no ejecuta el navegador.</criteria>
+    <criteria>Devuelve steps con procedencia de selectores, hook de @rule, reporter, configuración de playwright-bdd y ejemplos CI para GitHub/Azure; no ejecuta el navegador.</criteria>
   </evaluation>
   <evaluation id="5">
     <question>Mapeá los escenarios “Compra aprobada” y “Compra rechazada” a RN-014 y RN-015 respectivamente, y avisá si RN-016 queda sin cobertura.</question>

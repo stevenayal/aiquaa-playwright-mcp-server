@@ -55,6 +55,44 @@ export const GenerateBddInputSchema = GenerateBddInputObjectSchema
     }
   });
 
+const PlaywrightAuthSchema = z
+  .object({
+    login_path: z.string().min(1).default("/login").describe("Ruta relativa de login."),
+    username_label: z.string().min(1).default("Email").describe("Label accesible del usuario/email."),
+    password_label: z.string().min(1).default("Contraseña").describe("Label accesible de la contraseña."),
+    submit_name: z.string().min(1).default("Iniciar sesión").describe("Nombre accesible del botón de login."),
+    success_url_pattern: z
+      .string()
+      .min(1)
+      .default("dashboard|home|inicio")
+      .describe("Patrón RegExp de la URL posterior al login."),
+    username_env: z.string().min(1).default("TEST_USER").describe("Variable de entorno para el usuario."),
+    password_env: z.string().min(1).default("TEST_PASSWORD").describe("Variable de entorno para la contraseña."),
+  })
+  .strict();
+
+const ExternalValidationSchema = z
+  .object({
+    type: z.enum(["sms", "email", "push", "db_state", "other"]).describe("Tipo de validación externa."),
+    api_url_env: z
+      .string()
+      .min(1)
+      .default("NOTIFICATION_API_URL")
+      .describe("Variable de entorno que contiene la URL de consulta."),
+    api_token_env: z
+      .string()
+      .min(1)
+      .default("NOTIFICATION_API_TOKEN")
+      .describe("Variable de entorno que contiene el Bearer token."),
+    response_field: z
+      .string()
+      .min(1)
+      .describe("Campo en dot notation que debe extraerse. Ejemplo: data.code."),
+    timeout_ms: z.number().int().min(1_000).max(120_000).default(15_000),
+    poll_interval_ms: z.number().int().min(250).max(10_000).default(2_000),
+  })
+  .strict();
+
 export const GeneratePlaywrightInputObjectSchema = z.object({
     feature_content: z
       .string()
@@ -76,6 +114,26 @@ export const GeneratePlaywrightInputObjectSchema = z.object({
       .max(10_000)
       .optional()
       .describe("Contexto adicional: rutas, roles, labels y test IDs conocidos."),
+    selector_source: z
+      .enum(["provided_dom", "provided_component", "provided_test_ids", "estimated"])
+      .default("estimated")
+      .describe("Origen verificable de los selectores. Usá estimated si no se inspeccionó DOM/código."),
+    auth: PlaywrightAuthSchema
+      .optional()
+      .describe("Si se proporciona, genera auth.setup.ts sin credenciales hardcodeadas."),
+    external_validation: ExternalValidationSchema
+      .optional()
+      .describe("Genera un helper de polling para OTP, email, push o estado de negocio."),
+    browsers: z
+      .array(z.enum(["chromium", "firefox", "webkit"]))
+      .min(1)
+      .default(["chromium"])
+      .describe("Browsers que se configurarán. Ejemplo: ['chromium']."),
+    ci_targets: z
+      .array(z.enum(["github_actions", "azure_pipelines"]))
+      .min(1)
+      .default(["github_actions", "azure_pipelines"])
+      .describe("Pipelines que se devolverán como artefactos."),
     response_format: ResponseFormatSchema,
   }).strict();
 

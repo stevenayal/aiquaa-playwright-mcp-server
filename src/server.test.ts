@@ -30,6 +30,19 @@ test("expone cinco tools anotadas y ejecuta un mapeo sin acceso externo", async 
     });
     assert.notEqual(result.isError, true);
     assert.match(JSON.stringify(result.structuredContent), /RN-014/);
+
+    const generated = await client.callTool({
+      name: "aiquaa_generate_playwright_tests",
+      arguments: {
+        feature_content:
+          "Feature: Login\nScenario: Login válido\nGiven el usuario está en la página\nWhen hace clic en \"Ingresar\"\nThen ve \"Inicio\"",
+        base_url: "https://staging.example.com",
+        response_format: "json",
+      },
+    });
+    assert.notEqual(generated.isError, true);
+    assert.match(JSON.stringify(generated.structuredContent), /github\/workflows\/playwright\.yml/);
+    assert.match(JSON.stringify(generated.structuredContent), /azure-pipelines\.playwright\.yml/);
   } finally {
     await client.close();
     await server.close();

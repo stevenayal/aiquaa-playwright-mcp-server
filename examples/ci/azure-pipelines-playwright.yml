@@ -1,0 +1,48 @@
+trigger:
+  branches:
+    include: [main]
+
+pr:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: 20.x
+    displayName: Install Node.js
+
+  - script: npm ci
+    displayName: Install dependencies
+
+  - script: npx playwright install --with-deps chromium
+    displayName: Install Playwright browsers
+
+  - script: npx bddgen --config playwright.config.aiquaa.ts
+    displayName: Generate BDD specs
+
+  - script: npx playwright test --config playwright.config.aiquaa.ts
+    displayName: Run Playwright
+    env:
+      BASE_URL: $(BASE_URL)
+      TEST_USER: $(TEST_USER)
+      TEST_PASSWORD: $(TEST_PASSWORD)
+      NOTIFICATION_API_URL: $(NOTIFICATION_API_URL)
+      NOTIFICATION_API_TOKEN: $(NOTIFICATION_API_TOKEN)
+
+  - task: PublishTestResults@2
+    condition: always()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: test-results/playwright-junit.xml
+      failTaskOnFailedTests: true
+      testRunTitle: Playwright BDD
+
+  - task: PublishPipelineArtifact@1
+    condition: always()
+    inputs:
+      targetPath: $(System.DefaultWorkingDirectory)/test-results
+      artifact: playwright-results
