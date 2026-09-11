@@ -43,37 +43,57 @@ El resultado no es un test aislado. Es una cadena de evidencia:
 | Llevarlo a CI | Genera configuración para GitHub Actions y Azure Pipelines |
 | Manejar login y verificaciones externas | Usa `storageState`, secretos por entorno y polling para email, SMS, push o APIs |
 | Reducir contexto repetido | Integra CodeGraph para código enfocado y Engram para memoria persistente |
+| Gastar menos tokens | Cada dato viaja una vez; el formato por defecto resume y deja el detalle estructurado |
 
 ## Quick start
 
 ### 1. Iniciá el servidor
 
+Para un cliente local (Claude Code, Claude Desktop y la mayoría de los clientes MCP), usá **stdio**: un proceso por cliente, sin puerto abierto.
+
+```bash
+npx -y aiquaa-playwright-mcp-server --stdio
+```
+
+Para exponerlo como servicio, usá **Streamable HTTP**:
+
 ```bash
 npx -y aiquaa-playwright-mcp-server
 ```
 
-El servidor queda disponible en:
+- MCP: `http://127.0.0.1:3000/mcp`
+- Health check: `http://127.0.0.1:3000/health`
 
-- MCP: `http://localhost:3000/mcp`
-- Health check: `http://localhost:3000/health`
-
-`PORT` y `MCP_PATH` son configurables.
+El servidor escucha en `127.0.0.1` por defecto porque el endpoint MCP no tiene autenticación propia. Para exponerlo, definí `MCP_HOST` y declará los hosts válidos en `MCP_ALLOWED_HOSTS`: la protección contra DNS rebinding está activa y rechaza cualquier `Host` no declarado.
 
 ### 2. Conectá tu cliente MCP
 
-Para clientes compatibles con Streamable HTTP, usá esta definición como referencia:
+Para stdio:
 
 ```json
 {
   "mcpServers": {
     "aiquaa-qa": {
-      "url": "http://localhost:3000/mcp"
+      "command": "npx",
+      "args": ["-y", "aiquaa-playwright-mcp-server", "--stdio"]
     }
   }
 }
 ```
 
-La ubicación exacta del archivo cambia según el cliente. El servidor usa Streamable HTTP sin estado y crea un contexto aislado por solicitud.
+Para Streamable HTTP:
+
+```json
+{
+  "mcpServers": {
+    "aiquaa-qa": {
+      "url": "http://127.0.0.1:3000/mcp"
+    }
+  }
+}
+```
+
+La ubicación exacta del archivo cambia según el cliente. El transporte HTTP es sin estado y crea un contexto aislado por solicitud.
 
 ### 3. Pedile un flujo completo
 
@@ -100,7 +120,28 @@ Los nombres son breves, en español y fáciles de descubrir:
 | `qa_memoria` | Decisiones y aprendizajes recuperados desde Engram | No |
 | `qa_recordar` | Memoria curada e idempotente por `topic_key` | No |
 
-Todos los inputs usan schemas Zod estrictos. Las tools declaran sus annotations MCP de lectura, escritura, idempotencia y acceso externo.
+Todos los inputs usan schemas Zod estrictos. Las tools declaran sus annotations MCP de lectura, escritura, idempotencia y acceso externo, y un `outputSchema` que el SDK valida.
+
+## Contexto que no se paga dos veces
+
+Cada respuesta emite cada dato **una sola vez**. `response_format` elige dónde:
+
+| Formato | `content[0].text` | `structuredContent` |
+|---|---|---|
+| `summary` (default) | resumen de ≤15 líneas: conteos, warnings y rutas de archivo | resultado completo |
+| `markdown` | artefactos inline, listos para copiar | resultado sin el contenido que ya está en el texto |
+| `json` | puntero de una línea | resultado completo |
+
+Medido sobre un feature de dos escenarios, `qa_pruebas` pasó de 15 253 a 10 038 bytes en el formato por defecto, y de 17 546 a 9 477 en `json`.
+
+Cuando necesitás menos todavía:
+
+- `include_files` devuelve solo los artefactos que pediste (`["config"]`, `["steps", "github_actions"]`);
+- `max_file_bytes` trunca lo que exceda un tamaño y lo deja explícito;
+- `detail: "summary"` en `qa_cobertura` reemplaza la lista completa de tests por conteos y los títulos de hasta 3 tests fallidos por regla;
+- `max_output_bytes` acota la salida de `qa_contexto` y `qa_memoria`.
+
+Un test de presupuesto (`npm test`) falla si alguna respuesta vuelve a crecer o si un contenido aparece duplicado.
 
 ## Qué genera
 
@@ -137,7 +178,12 @@ Invocación de `qa_pruebas`:
   "base_url": "https://staging.example.com",
   "app_context": "El formulario usa labels Email y Contraseña.",
   "selector_source": "provided_component",
+  "dom_context": {
+    "labels": ["Email", "Contraseña"],
+    "roles": [{ "role": "button", "name": "Ingresar" }]
+  },
   "auth": {
+    "mode": "password",
     "login_path": "/login",
     "username_label": "Email",
     "password_label": "Contraseña",
@@ -171,7 +217,30 @@ El generador distingue el origen real de cada locator:
 - `provided_test_ids`: inventario confirmado de `data-testid`;
 - `estimated`: inferido solo desde Gherkin.
 
-Si falta información para implementar una acción o assertion confiable, genera un `TODO` que falla explícitamente. No produce falsos positivos comprobando únicamente que la página existe.
+Los tres `provided_*` **exigen** `dom_context`: sin selectores reales que verificar, no hay nada que declarar como verificado y la tool rechaza el pedido. Los selectores salen de ahí, y lo que `dom_context` no cubre queda bloqueado con un `TODO` que falla explícitamente en vez de convertirse en una suposición con etiqueta de confianza.
+
+```json
+{
+  "selector_source": "provided_test_ids",
+  "dom_context": {
+    "test_ids": ["auth-login-field-email", "auth-login-submit", "nav-logout"],
+    "roles": [{ "role": "button", "name": "Ingresar" }],
+    "labels": ["Email"]
+  }
+}
+```
+
+Usá `qa_contexto`, el DOM del navegador o el código del componente para armar ese inventario. No produce falsos positivos comprobando únicamente que la página existe.
+
+### Logins que no son usuario y contraseña
+
+`auth.mode` cubre los tres casos reales:
+
+- `password`: el flujo clásico;
+- `passwordless`: solo identificador, sin campo de contraseña ni secret de password (magic link, OTP por email);
+- `otp`: agrega un paso de código, que requiere `otp_env` y un `dom_context` con el test ID del campo.
+
+`success_url_pattern` se valida como RegExp al generar, no cuando el test corre. Si tu app vuelve a la raíz después del login, usá `^/$` en lugar del default `dashboard|home|inicio`.
 
 ## Seguridad desde el diseño
 
@@ -199,8 +268,17 @@ Para resolver IDs y consultar reglas configurá:
 |---|---|
 | `AIQUAA_API_BASE_URL` | URL del backend AIQUAA |
 | `AIQUAA_ACCESS_TOKEN` | Bearer token de desarrollo; en producción preferí el header por solicitud |
+| `AIQUAA_TIMEOUT_MS` | Deadline por request, default `15000` |
+| `AIQUAA_MAX_RETRIES` | Reintentos ante 429 y 5xx, default `2` |
+| `AIQUAA_MAX_RULES` / `AIQUAA_MAX_PAGES` | Techos del paginado de reglas, default `500` / `10` |
+| `AIQUAA_CACHE_TTL_MS` | TTL de la caché de reglas por proyecto y token, default `60000` |
+| `MCP_TRANSPORT` | `stdio` o vacío para HTTP |
 | `PORT` | Puerto HTTP, default `3000` |
+| `MCP_HOST` | Interfaz de bind, default `127.0.0.1` |
 | `MCP_PATH` | Ruta MCP, default `/mcp` |
+| `MCP_ALLOWED_HOSTS` / `MCP_ALLOWED_ORIGINS` | Allowlist de `Host` y `Origin` para exponerlo detrás de un proxy |
+
+Las llamadas al backend tienen deadline, reintentan 429 y 5xx respetando `Retry-After`, y cachean el catálogo de reglas por proyecto y token. Si el catálogo se trunca por los topes, la respuesta lo dice en `warnings` en vez de reportar una cobertura incompleta como si fuera total.
 
 ```powershell
 $env:AIQUAA_API_BASE_URL="https://api.example.aiquaa.com"
@@ -256,12 +334,29 @@ En contenedores, montá el directorio de datos de Engram como volumen persistent
 
 ## CI/CD incluido
 
-El repositorio valida cada cambio mediante `.github/workflows/ci.yml`. Para proyectos consumidores incluye:
+El repositorio se valida a sí mismo con lo mismo que recomienda:
 
-- `examples/ci/github-actions-playwright.yml`
-- `examples/ci/azure-pipelines-playwright.yml`
+- `ci.yml`: typecheck, matriz Node 20/22/24, smoke de ambos transportes, presupuesto de tokens y compatibilidad con pnpm, todo con `concurrency` y actions pineadas por SHA.
+- `codeql.yml` y `dependabot.yml`: análisis semanal y actualizaciones agrupadas.
+- `publish-npm.yml`: `npm publish --provenance` sobre Trusted Publishing/OIDC, sin tokens permanentes.
+- `release-please.yml`: bump, changelog y tag derivados de los Conventional Commits.
+- `e2e-sandbox.yml`: genera una suite con `qa_pruebas` contra una app real y la ejecuta. No bloquea PRs, pero sí falla si el generador deja un step sin selector verificable.
 
-Ambos ejemplos ejecutan `bddgen`, corren Playwright, publican JUnit y conservan reportes como artifacts. Las releases npm se publican mediante Trusted Publishing/OIDC, sin tokens permanentes.
+Para proyectos consumidores incluye `examples/ci/github-actions-playwright.yml` y `examples/ci/azure-pipelines-playwright.yml`, regenerados desde el propio generador para que no se desalineen. El workflow generado trae `permissions`, `concurrency`, caché de browsers de Playwright por versión y, con `shards > 1`, matriz de sharding con reporte `blob` y job de merge.
+
+## Migración desde v0.2.x
+
+`0.3.0` cambia el contrato de respuesta y el de selectores.
+
+| Antes | Ahora |
+|---|---|
+| `response_format` default `markdown`, con el payload duplicado | default `summary`; `markdown` sigue disponible y ya no duplica |
+| `selector_source: "provided_*"` sin más | requiere `dom_context` con selectores reales |
+| `auth` siempre con contraseña | `auth.mode` acepta `passwordless` y `otp` |
+| `qa_cobertura` devolvía todos los tests por regla | `detail: "summary"` por default; pedí `"full"` para el listado completo |
+| Solo Streamable HTTP, bind en todas las interfaces | stdio disponible; HTTP bindea `127.0.0.1` |
+
+Los nombres de las tools no cambian. Para volver al comportamiento anterior en una llamada puntual, pasá `response_format: "markdown"` y `detail: "full"`.
 
 ## Migración desde v0.1.x
 
@@ -299,7 +394,7 @@ npm ci
 npm test
 ```
 
-El proyecto usa TypeScript estricto, 9 pruebas automatizadas y 13 evaluaciones MCP. Los YAML generados y los ejemplos estáticos se validan automáticamente.
+El proyecto usa TypeScript estricto y 30 pruebas automatizadas. Se validan el presupuesto de tokens, el contrato de procedencia de selectores, los timeouts y reintentos del cliente, ambos transportes, y que todos los YAML (generados, de ejemplo y del propio repo) parseen y tengan las actions pineadas por SHA.
 
 ## Licencia
 
