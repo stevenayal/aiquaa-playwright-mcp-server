@@ -1,4 +1,4 @@
-import type { PaginatedBusinessRules } from "../types.js";
+import type { GeneratedFile, PaginatedBusinessRules } from "../types.js";
 import type { BddGenerationResult } from "./bdd-generator.js";
 import type { PlaywrightGenerationResult } from "./playwright-generator.js";
 import type { ScenarioMappingResult } from "./scenario-mapper.js";
@@ -80,4 +80,16 @@ export function mappingToMarkdown(result: ScenarioMappingResult): string {
 
 function cell(value: string): string {
   return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+/**
+ * Quita el contenido de los archivos del valor estructurado cuando el markdown
+ * ya lo incluye. Sin esto, cada respuesta en formato markdown pagaria dos veces
+ * los mismos bytes.
+ */
+export function withoutFileContents<T extends { files: GeneratedFile[] }>(result: T): unknown {
+  return {
+    ...result,
+    files: result.files.map(({ content: _content, ...rest }) => rest),
+  };
 }

@@ -32,16 +32,27 @@ export function parsePlaywrightResults(input: string | Record<string, unknown>):
   return deduplicate(normalized);
 }
 
+export type CoverageDetail = "summary" | "full";
+
 export function buildCoverageReport(
   projectId: string,
   rules: BusinessRule[],
   tests: NormalizedTestResult[],
+  detail: CoverageDetail = "summary",
 ): CoverageReport {
   const ruleItems: RuleCoverageItem[] = rules.map((rule) => {
     const ruleTests = tests.filter((test) => test.ruleIds.includes(rule.id));
-    return { rule, status: coverageStatus(ruleTests), tests: ruleTests };
+    const failed = ruleTests.filter((test) => isFailure(test.status)).map((test) => test.title);
+    return {
+      rule,
+      status: coverageStatus(ruleTests),
+      testCount: ruleTests.length,
+      // `full` arrastra cada test de cada regla; `summary` deja solo lo accionable.
+      ...(detail === "full" ? { tests: ruleTests } : {}),
+      ...(detail === "summary" && failed.length > 0 ? { failedTests: failed.slice(0, 3) } : {}),
+    };
   });
-  const coveredRules = ruleItems.filter((item) => item.tests.length > 0).length;
+  const coveredRules = ruleItems.filter((item) => item.testCount > 0).length;
   const passingRules = ruleItems.filter((item) => item.status === "passed").length;
   const failingRules = ruleItems.filter((item) => item.status === "failing").length;
   const uncoveredRules = ruleItems.filter((item) => item.status === "uncovered").length;
@@ -86,7 +97,7 @@ export function coverageReportToMarkdown(report: CoverageReport): string {
     "| Regla | Título | Estado | Tests |",
     "|---|---|---:|---:|",
     ...report.rules.map((item) =>
-      `| ${escapeCell(item.rule.id)} | ${escapeCell(item.rule.title)} | ${item.status} | ${item.tests.length} |`,
+      `| ${escapeCell(item.rule.id)} | ${escapeCell(item.rule.title)} | ${item.status} | ${item.testCount} |`,
     ),
     "",
     "## Desglose por feature",

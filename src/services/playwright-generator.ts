@@ -1,11 +1,29 @@
 import type { GeneratedFile } from "../types.js";
 import { parseFeature, type ParsedStep } from "./gherkin.js";
+import { truncateText } from "./response.js";
 
 export type SelectorSource = "provided_dom" | "provided_component" | "provided_test_ids" | "estimated";
 export type BrowserName = "chromium" | "firefox" | "webkit";
 export type CiTarget = "github_actions" | "azure_pipelines";
+export type AuthMode = "password" | "passwordless" | "otp";
+export type GeneratedFileKind =
+  | "steps"
+  | "hooks"
+  | "reporter"
+  | "config"
+  | "auth"
+  | "notification"
+  | "github_actions"
+  | "azure_pipelines";
+
+export interface DomContext {
+  testIds?: string[];
+  roles?: Array<{ role: string; name: string }>;
+  labels?: string[];
+}
 
 export interface PlaywrightAuthOptions {
+  mode: AuthMode;
   loginPath: string;
   usernameLabel: string;
   passwordLabel: string;
@@ -13,6 +31,7 @@ export interface PlaywrightAuthOptions {
   successUrlPattern: string;
   usernameEnv: string;
   passwordEnv: string;
+  otpEnv?: string;
 }
 
 export interface ExternalValidationOptions {
@@ -27,11 +46,15 @@ export interface ExternalValidationOptions {
 export interface PlaywrightGenerationOptions {
   baseUrl?: string;
   appContext?: string;
+  domContext?: DomContext;
   selectorSource?: SelectorSource;
   auth?: PlaywrightAuthOptions;
   externalValidation?: ExternalValidationOptions;
   browsers?: BrowserName[];
   ciTargets?: CiTarget[];
+  includeFiles?: GeneratedFileKind[];
+  maxFileBytes?: number;
+  shards?: number;
 }
 
 export interface SelectorProvenance {
@@ -47,8 +70,16 @@ export interface PlaywrightGenerationResult {
   stepCount: number;
   selectorProvenance: SelectorProvenance[];
   files: GeneratedFile[];
+  omittedFiles: GeneratedFileKind[];
   instructions: string[];
   warnings: string[];
+}
+
+interface Candidate {
+  kind: GeneratedFileKind;
+  path: string;
+  language: string;
+  content: () => string;
 }
 
 export function generatePlaywrightArtifacts(
@@ -64,53 +95,82 @@ export function generatePlaywrightArtifacts(
   const selectorSource = options.selectorSource ?? "estimated";
   const browsers = options.browsers ?? ["chromium"];
   const ciTargets = options.ciTargets ?? ["github_actions", "azure_pipelines"];
-  const renderedSteps = renderSteps(steps, selectorSource, options.appContext);
-  const files: GeneratedFile[] = [
+  const shards = Math.max(1, options.shards ?? 1);
+  const maxFileBytes = options.maxFileBytes ?? 20_000;
+  const renderedSteps = renderSteps(steps, selectorSource, options.domContext, options.appContext);
+
+  if (options.auth) assertValidUrlPattern(options.auth.successUrlPattern);
+
+  const candidates: Candidate[] = [
     {
+      kind: "steps",
       path: "features/steps/generated.steps.ts",
       language: "typescript",
-      content: renderedSteps.content,
+      content: () => renderedSteps.content,
     },
+    { kind: "hooks", path: "features/support/rule-hooks.ts", language: "typescript", content: renderRuleHooks },
     {
-      path: "features/support/rule-hooks.ts",
-      language: "typescript",
-      content: renderRuleHooks(),
-    },
-    {
+      kind: "reporter",
       path: "reporters/aiquaa-rule-reporter.ts",
       language: "typescript",
-      content: renderReporterAdapter(),
+      content: renderReporterAdapter,
     },
     {
+      kind: "config",
       path: "playwright.config.aiquaa.ts",
       language: "typescript",
-      content: renderConfig(options.baseUrl, browsers, options.auth),
+      content: () => renderConfig(options.baseUrl, browsers, options.auth),
     },
   ];
   if (options.auth) {
-    files.push({ path: "features/support/auth.setup.ts", language: "typescript", content: renderAuthSetup(options.auth) });
+    const auth = options.auth;
+    candidates.push({
+      kind: "auth",
+      path: "features/support/auth.setup.ts",
+      language: "typescript",
+      content: () => renderAuthSetup(auth, options.domContext),
+    });
   }
   if (options.externalValidation) {
-    files.push({
+    const validation = options.externalValidation;
+    candidates.push({
+      kind: "notification",
       path: "features/support/notification-helper.ts",
       language: "typescript",
-      content: renderNotificationHelper(options.externalValidation),
+      content: () => renderNotificationHelper(validation),
     });
   }
   if (ciTargets.includes("github_actions")) {
-    files.push({
+    candidates.push({
+      kind: "github_actions",
       path: ".github/workflows/playwright.yml",
       language: "yaml",
-      content: renderGithubActions(browsers, options.auth, options.externalValidation),
+      content: () => renderGithubActions(browsers, shards, options.auth, options.externalValidation),
     });
   }
   if (ciTargets.includes("azure_pipelines")) {
-    files.push({
+    candidates.push({
+      kind: "azure_pipelines",
       path: "azure-pipelines.playwright.yml",
       language: "yaml",
-      content: renderAzurePipelines(browsers, options.auth, options.externalValidation),
+      content: () => renderAzurePipelines(browsers, options.auth, options.externalValidation),
     });
   }
+
+  const requested = options.includeFiles;
+  const selected = requested ? candidates.filter((item) => requested.includes(item.kind)) : candidates;
+  const omittedFiles = candidates.filter((item) => !selected.includes(item)).map((item) => item.kind);
+  const files: GeneratedFile[] = selected.map((candidate) => {
+    const raw = candidate.content();
+    const { text, truncated } = truncateText(raw, maxFileBytes);
+    return {
+      path: candidate.path,
+      language: candidate.language,
+      content: text,
+      bytes: raw.length,
+      ...(truncated ? { truncated: true } : {}),
+    };
+  });
 
   const blocked = renderedSteps.provenance.filter((item) => item.confidence === "blocked").length;
   const warnings = [
@@ -120,6 +180,12 @@ export function generatePlaywrightArtifacts(
     ...(blocked > 0
       ? [`${blocked} step(s) quedaron bloqueados con un error TODO para evitar falsos positivos.`]
       : []),
+    ...(files.some((file) => file.truncated)
+      ? ["Algún archivo se truncó por max_file_bytes; pedilo solo con include_files para verlo completo."]
+      : []),
+    ...(shards > 1
+      ? ["Con shards>1 cada shard escribe su propio aiquaa-rule-results; usá el JSON mergeado en qa_cobertura."]
+      : []),
   ];
   return {
     featureName: parsed.name,
@@ -127,6 +193,7 @@ export function generatePlaywrightArtifacts(
     stepCount: steps.length,
     selectorProvenance: renderedSteps.provenance,
     files,
+    omittedFiles,
     instructions: [
       "Copiá el .feature y los archivos generados al proyecto Playwright.",
       "Revisá selectorProvenance y resolvé los TODO bloqueados con HTML, código del componente o codegen.",
@@ -137,15 +204,25 @@ export function generatePlaywrightArtifacts(
   };
 }
 
+function assertValidUrlPattern(pattern: string): void {
+  try {
+    new RegExp(pattern);
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`auth.success_url_pattern no es una RegExp válida: ${detail}`);
+  }
+}
+
 function renderSteps(
   steps: ParsedStep[],
   selectorSource: SelectorSource,
+  domContext?: DomContext,
   appContext?: string,
 ): { content: string; provenance: SelectorProvenance[] } {
   const provenance: SelectorProvenance[] = [];
   const registrations = steps.map((step) => {
     const method = step.keyword === "And" || step.keyword === "But" ? "Then" : step.keyword;
-    const rendered = renderStepBody(step, selectorSource);
+    const rendered = renderStepBody(step, selectorSource, domContext);
     provenance.push({ step: step.text, source: selectorSource, ...rendered.provenance });
     return `${method}(${JSON.stringify(step.text)}, async ({ page }) => {\n${rendered.body}\n});`;
   });
@@ -166,42 +243,140 @@ function renderSteps(
 function renderStepBody(
   step: ParsedStep,
   selectorSource: SelectorSource,
+  domContext?: DomContext,
 ): { body: string; provenance: Pick<SelectorProvenance, "strategy" | "confidence"> } {
-  const quoted = [...step.text.matchAll(/["“”']([^"“”']+)["“”']/g)].map((match) => match[1]).filter(Boolean);
+  const quoted = [...step.text.matchAll(/["“”']([^"“”']+)["“”']/g)]
+    .map((match) => match[1])
+    .filter((value): value is string => Boolean(value));
   const normalized = step.text.toLocaleLowerCase();
-  const confidence = selectorSource === "estimated" ? "estimated" as const : "provided" as const;
-  const provenanceComment = `  // Selector provenance: ${selectorSource}; confidence: ${confidence}`;
-  if (step.keyword === "Given" && /(página|pagina|page|sitio|website|aplicación|aplicacion)/.test(normalized)) {
+  const isNavigation = step.keyword === "Given"
+    && /(página|pagina|page|sitio|website|aplicación|aplicacion)/.test(normalized);
+  const isClick = /(clic|click|presiona|press)/.test(normalized);
+  const isFill = /(ingresa|completa|escribe|fill|enter)/.test(normalized);
+  const isAssertion = ["Then", "And", "But"].includes(step.keyword);
+
+  if (isNavigation) {
     return {
-      body: `${provenanceComment}\n  await page.goto('/');`,
-      provenance: { strategy: "navigation", confidence },
+      body: `${comment(selectorSource, "provided")}\n  await page.goto('/');`,
+      provenance: { strategy: "navigation", confidence: "provided" },
     };
   }
-  if (step.keyword === "When" && /(clic|click|presiona|press)/.test(normalized) && quoted[0]) {
+
+  // Los selectores verificados solo salen de dom_context. Nunca se etiqueta como
+  // "provided" algo que en realidad se infirió del texto Gherkin.
+  if (selectorSource !== "estimated") {
+    const resolved = resolveFromDomContext(quoted, domContext, { isClick, isFill, isAssertion });
+    if (resolved) {
+      return { body: `${comment(selectorSource, "provided")}\n  ${resolved.code}`, provenance: resolved.provenance };
+    }
+    return blockedStep(step, "no hay entrada en dom_context que cubra este step");
+  }
+
+  if (isClick && quoted[0]) {
     return {
-      body: `${provenanceComment}\n  await page.getByRole('button', { name: ${JSON.stringify(quoted[0])} }).click();`,
-      provenance: { strategy: "getByRole(button)", confidence },
+      body: `${comment(selectorSource, "estimated")}\n  await page.getByRole('button', { name: ${JSON.stringify(quoted[0])} }).click();`,
+      provenance: { strategy: "getByRole(button)", confidence: "estimated" },
     };
   }
-  if (step.keyword === "When" && /(ingresa|completa|escribe|fill|enter)/.test(normalized) && quoted[0] && quoted[1]) {
+  if (isFill && quoted[0] && quoted[1]) {
     return {
-      body: `${provenanceComment}\n  await page.getByLabel(${JSON.stringify(quoted[0])}).fill(${JSON.stringify(quoted[1])});`,
-      provenance: { strategy: "getByLabel", confidence },
+      body: `${comment(selectorSource, "estimated")}\n  await page.getByLabel(${JSON.stringify(quoted[0])}).fill(${JSON.stringify(quoted[1])});`,
+      provenance: { strategy: "getByLabel", confidence: "estimated" },
     };
   }
-  if (["Then", "And", "But"].includes(step.keyword) && quoted[0]) {
+  if (isAssertion && quoted[0]) {
     return {
-      body: `${provenanceComment}\n  await expect(page.getByText(${JSON.stringify(quoted[0])})).toBeVisible();`,
-      provenance: { strategy: "getByText", confidence },
+      body: `${comment(selectorSource, "estimated")}\n  await expect(page.getByText(${JSON.stringify(quoted[0])})).toBeVisible();`,
+      provenance: { strategy: "getByText", confidence: "estimated" },
     };
   }
+  return blockedStep(step, "falta HTML, componente o test-id para implementarlo");
+}
+
+function resolveFromDomContext(
+  quoted: string[],
+  domContext: DomContext | undefined,
+  intent: { isClick: boolean; isFill: boolean; isAssertion: boolean },
+): { code: string; provenance: Pick<SelectorProvenance, "strategy" | "confidence"> } | undefined {
+  if (!domContext) return undefined;
+  const target = quoted[0];
+  if (!target) return undefined;
+
+  const testId = matchTestId(target, domContext.testIds);
+  if (testId) {
+    const locator = `page.getByTestId(${JSON.stringify(testId)})`;
+    if (intent.isFill && quoted[1]) {
+      return {
+        code: `await ${locator}.fill(${JSON.stringify(quoted[1])});`,
+        provenance: { strategy: "getByTestId", confidence: "provided" },
+      };
+    }
+    if (intent.isClick) {
+      return { code: `await ${locator}.click();`, provenance: { strategy: "getByTestId", confidence: "provided" } };
+    }
+    return {
+      code: `await expect(${locator}).toBeVisible();`,
+      provenance: { strategy: "getByTestId", confidence: "provided" },
+    };
+  }
+
+  const label = domContext.labels?.find((value) => equalsNormalized(value, target));
+  if (label && intent.isFill && quoted[1]) {
+    return {
+      code: `await page.getByLabel(${JSON.stringify(label)}).fill(${JSON.stringify(quoted[1])});`,
+      provenance: { strategy: "getByLabel", confidence: "provided" },
+    };
+  }
+
+  const role = domContext.roles?.find((entry) => equalsNormalized(entry.name, target));
+  if (role) {
+    const locator = `page.getByRole(${JSON.stringify(role.role)}, { name: ${JSON.stringify(role.name)} })`;
+    if (intent.isClick) {
+      return { code: `await ${locator}.click();`, provenance: { strategy: "getByRole", confidence: "provided" } };
+    }
+    return { code: `await expect(${locator}).toBeVisible();`, provenance: { strategy: "getByRole", confidence: "provided" } };
+  }
+  return undefined;
+}
+
+function blockedStep(
+  step: ParsedStep,
+  reason: string,
+): { body: string; provenance: Pick<SelectorProvenance, "strategy" | "confidence"> } {
   return {
     body: [
-      `  // TODO bloqueado: aportá HTML/componente/test-id para implementar: ${singleLineComment(step.text)}`,
+      `  // TODO bloqueado (${reason}): ${singleLineComment(step.text)}`,
       `  throw new Error(${JSON.stringify(`TODO selector/acción sin fuente verificable: ${step.text}`)});`,
     ].join("\n"),
     provenance: { strategy: "unresolved", confidence: "blocked" },
   };
+}
+
+function comment(source: SelectorSource, confidence: string): string {
+  return `  // Selector provenance: ${source}; confidence: ${confidence}`;
+}
+
+function matchTestId(target: string, testIds?: string[]): string | undefined {
+  if (!testIds?.length) return undefined;
+  const slug = slugify(target);
+  if (!slug) return undefined;
+  return (
+    testIds.find((id) => slugify(id) === slug) ??
+    testIds.find((id) => slugify(id).endsWith(`-${slug}`)) ??
+    testIds.find((id) => slugify(id).includes(slug))
+  );
+}
+
+function equalsNormalized(left: string, right: string): boolean {
+  return normalize(left) === normalize(right);
+}
+
+function normalize(value: string): string {
+  return value.trim().toLocaleLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+}
+
+function slugify(value: string): string {
+  return normalize(value).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function renderRuleHooks(): string {
@@ -247,6 +422,10 @@ const bddTestDir = defineBddConfig({
   steps: ['features/steps/**/*.ts', 'features/support/rule-hooks.ts'],
 });
 
+// Con sharding cada shard escribe su propio archivo de reglas y un reporte blob
+// que el job de merge combina.
+const shardSuffix = process.env.SHARD_INDEX ? \`-\${process.env.SHARD_INDEX}\` : '';
+
 export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
@@ -261,10 +440,12 @@ export default defineConfig({
 ${projects}
   ],
   reporter: [
-    ['html', { outputFolder: 'playwright-report', open: 'never' }],
-    ['junit', { outputFile: 'test-results/playwright-junit.xml' }],
-    ['./reporters/aiquaa-rule-reporter.ts', { outputFile: 'test-results/aiquaa-rule-results.json' }],
-    ['json', { outputFile: 'test-results/playwright-results.json' }],
+    process.env.PW_BLOB
+      ? ['blob', { outputDir: 'blob-report' }]
+      : ['html', { outputFolder: 'playwright-report', open: 'never' }],
+    ['junit', { outputFile: \`test-results/playwright-junit\${shardSuffix}.xml\` }],
+    ['./reporters/aiquaa-rule-reporter.ts', { outputFile: \`test-results/aiquaa-rule-results\${shardSuffix}.json\` }],
+    ['json', { outputFile: \`test-results/playwright-results\${shardSuffix}.json\` }],
   ],
 });
 `;
@@ -281,26 +462,86 @@ function renderBrowserProject(browser: BrowserName, authenticated: boolean): str
     },`;
 }
 
-function renderAuthSetup(auth: PlaywrightAuthOptions): string {
-  return `import { test as setup, expect } from '@playwright/test';
+function renderAuthSetup(auth: PlaywrightAuthOptions, domContext?: DomContext): string {
+  const header = `import { test as setup, expect } from '@playwright/test';
 import path from 'node:path';
 
 const authFile = path.join(process.cwd(), 'playwright/.auth/user.json');
 
 setup('autenticar usuario de prueba', async ({ page }) => {
   const username = process.env[${JSON.stringify(auth.usernameEnv)}];
-  const password = process.env[${JSON.stringify(auth.passwordEnv)}];
-  if (!username || !password) {
-    throw new Error('Faltan secrets ${auth.usernameEnv} y/o ${auth.passwordEnv} para el setup de autenticación.');
-  }
-  await page.goto(${JSON.stringify(auth.loginPath)});
-  await page.getByLabel(${JSON.stringify(auth.usernameLabel)}).fill(username);
-  await page.getByLabel(${JSON.stringify(auth.passwordLabel)}).fill(password);
-  await page.getByRole('button', { name: ${JSON.stringify(auth.submitName)} }).click();
-  await expect(page).toHaveURL(new RegExp(${JSON.stringify(auth.successUrlPattern)}));
+  if (!username) throw new Error('Falta el secret ${auth.usernameEnv} para el setup de autenticación.');`;
+
+  const usernameField = authField(domContext, auth.usernameLabel, ["email", "usuario", "user"]);
+  const submitAction = authSubmit(domContext, auth.submitName);
+  const tail = `  await expect(page).toHaveURL(new RegExp(${JSON.stringify(auth.successUrlPattern)}));
   await page.context().storageState({ path: authFile });
 });
 `;
+
+  if (auth.mode === "passwordless") {
+    return [
+      header,
+      `  await page.goto(${JSON.stringify(auth.loginPath)});`,
+      `  ${usernameField}.fill(username);`,
+      `  ${submitAction}`,
+      tail,
+    ].join("\n");
+  }
+
+  if (auth.mode === "otp") {
+    const otpEnv = auth.otpEnv;
+    const otpField = matchTestId("otp", domContext?.testIds)
+      ?? matchTestId("codigo", domContext?.testIds)
+      ?? matchTestId("code", domContext?.testIds);
+    const otpStep = otpEnv && otpField
+      ? [
+          `  const otp = process.env[${JSON.stringify(otpEnv)}];`,
+          `  if (!otp) throw new Error('Falta el secret ${otpEnv} con el código OTP de pruebas.');`,
+          `  await page.getByTestId(${JSON.stringify(otpField)}).fill(otp);`,
+          `  ${submitAction}`,
+        ].join("\n")
+      : [
+          "  // TODO bloqueado: pasá auth.otp_env y un dom_context con el test-id del campo OTP.",
+          `  throw new Error('TODO: paso OTP sin fuente verificable para el selector del campo de código.');`,
+        ].join("\n");
+    return [
+      header,
+      `  await page.goto(${JSON.stringify(auth.loginPath)});`,
+      `  ${usernameField}.fill(username);`,
+      `  ${submitAction}`,
+      otpStep,
+      tail,
+    ].join("\n");
+  }
+
+  const passwordField = authField(domContext, auth.passwordLabel, ["password", "contrasena", "clave"]);
+  return [
+    header,
+    `  const password = process.env[${JSON.stringify(auth.passwordEnv)}];`,
+    `  if (!password) throw new Error('Falta el secret ${auth.passwordEnv} para el setup de autenticación.');`,
+    `  await page.goto(${JSON.stringify(auth.loginPath)});`,
+    `  ${usernameField}.fill(username);`,
+    `  ${passwordField}.fill(password);`,
+    `  ${submitAction}`,
+    tail,
+  ].join("\n");
+}
+
+function authField(domContext: DomContext | undefined, label: string, hints: string[]): string {
+  const byLabel = matchTestId(label, domContext?.testIds);
+  const byHint = hints.map((hint) => matchTestId(hint, domContext?.testIds)).find(Boolean);
+  const testId = byLabel ?? byHint;
+  return testId
+    ? `await page.getByTestId(${JSON.stringify(testId)})`
+    : `await page.getByLabel(${JSON.stringify(label)})`;
+}
+
+function authSubmit(domContext: DomContext | undefined, submitName: string): string {
+  const testId = matchTestId(submitName, domContext?.testIds) ?? matchTestId("submit", domContext?.testIds);
+  return testId
+    ? `await page.getByTestId(${JSON.stringify(testId)}).click();`
+    : `await page.getByRole('button', { name: ${JSON.stringify(submitName)} }).click();`;
 }
 
 function renderNotificationHelper(validation: ExternalValidationOptions): string {
@@ -353,10 +594,13 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function renderGithubActions(
   browsers: BrowserName[],
+  shards: number,
   auth?: PlaywrightAuthOptions,
   validation?: ExternalValidationOptions,
 ): string {
   const secretLines = githubSecretLines(auth, validation);
+  const sharded = shards > 1;
+  const shardList = Array.from({ length: shards }, (_, index) => index + 1).join(", ");
   return [
     "name: Playwright BDD",
     "",
@@ -365,10 +609,25 @@ function renderGithubActions(
     "    branches: [main]",
     "  pull_request:",
     "",
+    "permissions:",
+    "  contents: read",
+    "",
+    "concurrency:",
+    "  group: playwright-${{ github.workflow }}-${{ github.ref }}",
+    "  cancel-in-progress: true",
+    "",
     "jobs:",
     "  test:",
     "    runs-on: ubuntu-latest",
     "    timeout-minutes: 60",
+    ...(sharded
+      ? [
+          "    strategy:",
+          "      fail-fast: false",
+          "      matrix:",
+          `        shard: [${shardList}]`,
+        ]
+      : []),
     "    steps:",
     "      - uses: actions/checkout@v5",
     "      - uses: actions/setup-node@v6",
@@ -376,27 +635,80 @@ function renderGithubActions(
     "          node-version: 20",
     "          cache: npm",
     "      - run: npm ci",
-    `      - run: npx playwright install --with-deps ${browsers.join(" ")}`,
+    "      - name: Resolve Playwright version",
+    "        id: pw",
+    "        run: echo \"version=$(node -p \"require('@playwright/test/package.json').version\")\" >> \"$GITHUB_OUTPUT\"",
+    "      - name: Cache Playwright browsers",
+    "        id: pw-cache",
+    "        uses: actions/cache@v4",
+    "        with:",
+    "          path: ~/.cache/ms-playwright",
+    "          key: ms-playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}",
+    "      - name: Install Playwright browsers",
+    "        if: steps.pw-cache.outputs.cache-hit != 'true'",
+    `        run: npx playwright install --with-deps ${browsers.join(" ")}`,
+    "      - name: Install system dependencies",
+    "        if: steps.pw-cache.outputs.cache-hit == 'true'",
+    `        run: npx playwright install-deps ${browsers.join(" ")}`,
     "      - run: npx bddgen --config playwright.config.aiquaa.ts",
     "      - name: Run Playwright",
-    "        run: npx playwright test --config playwright.config.aiquaa.ts",
-    ...(secretLines.length > 0 ? ["        env:", ...secretLines] : []),
+    ...(sharded
+      ? ["        run: npx playwright test --config playwright.config.aiquaa.ts --shard=${{ matrix.shard }}/" + String(shards)]
+      : ["        run: npx playwright test --config playwright.config.aiquaa.ts"]),
+    "        env:",
+    ...secretLines,
+    ...(sharded ? ["          PW_BLOB: \"1\"", "          SHARD_INDEX: ${{ matrix.shard }}"] : []),
     "      - name: Upload reports",
     "        if: ${{ !cancelled() }}",
     "        uses: actions/upload-artifact@v5",
     "        with:",
-    "          name: playwright-results",
+    ...(sharded
+      ? ["          name: playwright-results-${{ matrix.shard }}"]
+      : ["          name: playwright-results"]),
     "          path: |",
-    "            playwright-report/",
+    ...(sharded ? ["            blob-report/"] : ["            playwright-report/"]),
     "            test-results/",
     "          retention-days: 30",
+    ...(sharded
+      ? [
+          "",
+          "  merge-reports:",
+          "    if: ${{ !cancelled() }}",
+          "    needs: test",
+          "    runs-on: ubuntu-latest",
+          "    timeout-minutes: 15",
+          "    steps:",
+          "      - uses: actions/checkout@v5",
+          "      - uses: actions/setup-node@v6",
+          "        with:",
+          "          node-version: 20",
+          "          cache: npm",
+          "      - run: npm ci",
+          "      - uses: actions/download-artifact@v5",
+          "        with:",
+          "          pattern: playwright-results-*",
+          "          path: all-results",
+          "      - name: Merge HTML report",
+          "        run: npx playwright merge-reports --reporter html ./all-results",
+          "      - name: Merge AIQUAA rule results",
+          "        run: |",
+          "          node -e \"const fs=require('fs');const g=require('node:child_process');const files=g.execSync('find all-results -name \\\"aiquaa-rule-results*.json\\\"').toString().trim().split('\\n').filter(Boolean);const rules=new Map();let runStatus='passed';for(const f of files){const d=JSON.parse(fs.readFileSync(f,'utf8'));if(d.runStatus&&d.runStatus!=='passed')runStatus=d.runStatus;for(const r of d.businessRuleCoverage?.rules??[]){const prev=rules.get(r.ruleId)??[];rules.set(r.ruleId,[...prev,...r.tests]);}}const merged=[...rules.entries()].sort().map(([ruleId,tests])=>({ruleId,status:tests.some(t=>['failed','timedOut','interrupted'].includes(t.status))?'failed':tests.some(t=>t.status==='passed')?'passed':'skipped',tests}));fs.mkdirSync('test-results',{recursive:true});fs.writeFileSync('test-results/aiquaa-rule-results.json',JSON.stringify({schemaVersion:1,generatedAt:new Date().toISOString(),runStatus,businessRuleCoverage:{rulesWithTests:merged.length,passed:merged.filter(r=>r.status==='passed').length,failed:merged.filter(r=>r.status==='failed').length,skipped:merged.filter(r=>r.status==='skipped').length,rules:merged}},null,2));\"",
+          "      - uses: actions/upload-artifact@v5",
+          "        with:",
+          "          name: playwright-report-merged",
+          "          path: |",
+          "            playwright-report/",
+          "            test-results/aiquaa-rule-results.json",
+          "          retention-days: 30",
+        ]
+      : []),
     "",
   ].join("\n");
 }
 
 function githubSecretLines(auth?: PlaywrightAuthOptions, validation?: ExternalValidationOptions): string[] {
   const names = [
-    ...(auth ? [auth.usernameEnv, auth.passwordEnv] : []),
+    ...(auth ? authSecretNames(auth) : []),
     ...(validation ? [validation.apiUrlEnv, validation.apiTokenEnv] : []),
   ];
   return [
@@ -405,13 +717,20 @@ function githubSecretLines(auth?: PlaywrightAuthOptions, validation?: ExternalVa
   ];
 }
 
+function authSecretNames(auth: PlaywrightAuthOptions): string[] {
+  const names = [auth.usernameEnv];
+  if (auth.mode === "password") names.push(auth.passwordEnv);
+  if (auth.mode === "otp" && auth.otpEnv) names.push(auth.otpEnv);
+  return names;
+}
+
 function renderAzurePipelines(
   browsers: BrowserName[],
   auth?: PlaywrightAuthOptions,
   validation?: ExternalValidationOptions,
 ): string {
   const envNames = [
-    ...(auth ? [auth.usernameEnv, auth.passwordEnv] : []),
+    ...(auth ? authSecretNames(auth) : []),
     ...(validation ? [validation.apiUrlEnv, validation.apiTokenEnv] : []),
   ];
   const envLines = [
@@ -447,7 +766,7 @@ function renderAzurePipelines(
     "    condition: always()",
     "    inputs:",
     "      testResultsFormat: JUnit",
-    "      testResultsFiles: test-results/playwright-junit.xml",
+    "      testResultsFiles: test-results/playwright-junit*.xml",
     "      failTaskOnFailedTests: true",
     "      testRunTitle: Playwright BDD",
     "  - task: PublishPipelineArtifact@1",

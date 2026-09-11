@@ -12,7 +12,17 @@ import {
   SaveProjectMemoryInputSchema,
   SearchProjectMemoryInputSchema,
 } from "../schemas/tools.js";
-import type { BusinessRule, ResponseFormat } from "../types.js";
+import {
+  CodeContextOutputSchema,
+  CoverageReportOutputSchema,
+  GenerateBddOutputSchema,
+  GeneratePlaywrightOutputSchema,
+  ListBusinessRulesOutputSchema,
+  MapScenariosOutputSchema,
+  SaveMemoryOutputSchema,
+  SearchMemoryOutputSchema,
+} from "../schemas/outputs.js";
+import type { BusinessRule } from "../types.js";
 import { AiquaaClient } from "../services/aiquaa-client.js";
 import { generateBdd } from "../services/bdd-generator.js";
 import {
@@ -25,9 +35,21 @@ import {
   mappingToMarkdown,
   playwrightToMarkdown,
   rulesToMarkdown,
+  withoutFileContents,
 } from "../services/formatters.js";
+import {
+  bddSummary,
+  codeContextSummary,
+  coverageSummary,
+  mappingSummary,
+  memorySaveSummary,
+  memorySearchSummary,
+  playwrightSummary,
+  rulesSummary,
+} from "../services/summaries.js";
+import { toolResult } from "../services/response.js";
 import { validateExtractedPdfText } from "../services/pdf-text-validator.js";
-import { generatePlaywrightArtifacts } from "../services/playwright-generator.js";
+import { generatePlaywrightArtifacts, type DomContext } from "../services/playwright-generator.js";
 import { mapScenariosToRules } from "../services/scenario-mapper.js";
 import { CodeGraphClient } from "../services/codegraph-client.js";
 import { EngramClient } from "../services/engram-client.js";
@@ -36,7 +58,7 @@ export interface ToolContext {
   accessToken?: string;
 }
 
-const generatedToolAnnotations = {
+const localReadAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
   idempotentHint: true,
@@ -48,13 +70,6 @@ const remoteReadAnnotations = {
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: true,
-} as const;
-
-const localReadAnnotations = {
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: false,
 } as const;
 
 const persistentWriteAnnotations = {
@@ -72,6 +87,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       description:
         "Genera uno o más .feature Gherkin desde texto o un requerimiento AIQUAA. No hace OCR ni ejecuta tests.",
       inputSchema: GenerateBddInputObjectSchema.shape,
+      outputSchema: GenerateBddOutputSchema.shape,
       annotations: remoteReadAnnotations,
     },
     async (rawInput) => safeToolCall(async () => {
@@ -105,7 +121,13 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       }
       const result = generateBdd(requirementText, input.project_id, input.language, rules);
       result.warnings.push(...warnings);
-      return successResult(input.response_format, result, bddToMarkdown(result));
+      return toolResult({
+        format: input.response_format,
+        value: result,
+        summary: bddSummary,
+        markdown: bddToMarkdown,
+        deduplicated: withoutFileContents,
+      });
     }),
   );
 
@@ -116,6 +138,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       description:
         "Genera definiciones de steps, hook de reglas, reporter y configuración compatibles con playwright-bdd. No ejecuta tests.",
       inputSchema: GeneratePlaywrightInputObjectSchema.shape,
+      outputSchema: GeneratePlaywrightOutputSchema.shape,
       annotations: remoteReadAnnotations,
     },
     async (rawInput) => safeToolCall(async () => {
@@ -124,12 +147,17 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       const result = generatePlaywrightArtifacts(featureContent, {
         ...(input.base_url ? { baseUrl: input.base_url } : {}),
         ...(input.app_context ? { appContext: input.app_context } : {}),
+        ...(input.dom_context ? { domContext: toDomContext(input.dom_context) } : {}),
         selectorSource: input.selector_source,
         browsers: input.browsers,
         ciTargets: input.ci_targets,
+        ...(input.include_files ? { includeFiles: input.include_files } : {}),
+        maxFileBytes: input.max_file_bytes,
+        shards: input.shards,
         ...(input.auth
           ? {
               auth: {
+                mode: input.auth.mode,
                 loginPath: input.auth.login_path,
                 usernameLabel: input.auth.username_label,
                 passwordLabel: input.auth.password_label,
@@ -137,6 +165,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
                 successUrlPattern: input.auth.success_url_pattern,
                 usernameEnv: input.auth.username_env,
                 passwordEnv: input.auth.password_env,
+                ...(input.auth.otp_env ? { otpEnv: input.auth.otp_env } : {}),
               },
             }
           : {}),
@@ -153,7 +182,13 @@ export function registerTools(server: McpServer, context: ToolContext): void {
             }
           : {}),
       });
-      return successResult(input.response_format, result, playwrightToMarkdown(result));
+      return toolResult({
+        format: input.response_format,
+        value: result,
+        summary: playwrightSummary,
+        markdown: playwrightToMarkdown,
+        deduplicated: withoutFileContents,
+      });
     }),
   );
 
@@ -163,6 +198,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       title: "Listar reglas de negocio de AIQUAA",
       description: "Lista reglas paginadas de un proyecto AIQUAA con filtros opcionales.",
       inputSchema: ListBusinessRulesInputSchema.shape,
+      outputSchema: ListBusinessRulesOutputSchema.shape,
       annotations: remoteReadAnnotations,
     },
     async (rawInput) => safeToolCall(async () => {
@@ -174,7 +210,12 @@ export function registerTools(server: McpServer, context: ToolContext): void {
         ...(input.status ? { status: input.status } : {}),
         ...(input.priority ? { priority: input.priority } : {}),
       });
-      return successResult(input.response_format, result, rulesToMarkdown(result));
+      return toolResult({
+        format: input.response_format,
+        value: result,
+        summary: rulesSummary,
+        markdown: rulesToMarkdown,
+      });
     }),
   );
 
@@ -185,12 +226,20 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       description:
         "Aplica tags @rule:<ID> a escenarios Gherkin y devuelve las reglas que permanecen sin cobertura.",
       inputSchema: MapScenariosInputSchema.shape,
-      annotations: generatedToolAnnotations,
+      outputSchema: MapScenariosOutputSchema.shape,
+      annotations: localReadAnnotations,
     },
     async (rawInput) => safeToolCall(async () => {
       const input = MapScenariosInputSchema.parse(rawInput);
       const result = mapScenariosToRules(input.feature_contents, input.rule_ids, input.assignments);
-      return successResult(input.response_format, result, mappingToMarkdown(result));
+      return toolResult({
+        format: input.response_format,
+        value: result,
+        summary: mappingSummary,
+        markdown: mappingToMarkdown,
+        // El markdown ya incluye cada feature etiquetado.
+        deduplicated: ({ features: _features, ...rest }) => rest,
+      });
     }),
   );
 
@@ -201,6 +250,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       description:
         "Cruza resultados JSON de Playwright con reglas AIQUAA y reporta cobertura, fallas y reglas sin tests.",
       inputSchema: GenerateCoverageReportInputSchema.shape,
+      outputSchema: CoverageReportOutputSchema.shape,
       annotations: remoteReadAnnotations,
     },
     async (rawInput) => safeToolCall(async () => {
@@ -215,8 +265,13 @@ export function registerTools(server: McpServer, context: ToolContext): void {
           }))
         : await createClient(context).getAllBusinessRules(input.project_id);
       const tests = parsePlaywrightResults(input.playwright_results);
-      const result = buildCoverageReport(input.project_id, rules, tests);
-      return successResult(input.response_format, result, coverageReportToMarkdown(result));
+      const result = buildCoverageReport(input.project_id, rules, tests, input.detail);
+      return toolResult({
+        format: input.response_format,
+        value: result,
+        summary: coverageSummary,
+        markdown: coverageReportToMarkdown,
+      });
     }),
   );
 
@@ -227,6 +282,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       description:
         "Construye contexto estructural enfocado desde un repositorio local indexado por CodeGraph. Requiere CODEGRAPH_ALLOWED_ROOTS y codegraph init previo.",
       inputSchema: GetCodeContextInputSchema.shape,
+      outputSchema: CodeContextOutputSchema.shape,
       annotations: localReadAnnotations,
     },
     async (rawInput) => safeToolCall(async () => {
@@ -237,9 +293,15 @@ export function registerTools(server: McpServer, context: ToolContext): void {
         maxNodes: input.max_nodes,
         maxCodeBlocks: input.max_code_blocks,
         includeCode: input.include_code,
+        maxOutputBytes: input.max_output_bytes,
       });
-      const markdown = ["# Contexto estructural (CodeGraph)", "", result.context].join("\n");
-      return successResult(input.response_format, result, markdown);
+      return toolResult({
+        format: input.response_format,
+        value: result,
+        summary: codeContextSummary,
+        markdown: (value) => ["# Contexto estructural (CodeGraph)", "", value.context].join("\n"),
+        deduplicated: ({ context: _context, ...rest }) => rest,
+      });
     }),
   );
 
@@ -250,13 +312,24 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       description:
         "Recupera decisiones, patrones y aprendizajes persistidos en Engram, siempre limitados al project_id indicado.",
       inputSchema: SearchProjectMemoryInputSchema.shape,
+      outputSchema: SearchMemoryOutputSchema.shape,
       annotations: localReadAnnotations,
     },
     async (rawInput) => safeToolCall(async () => {
       const input = SearchProjectMemoryInputSchema.parse(rawInput);
-      const result = await new EngramClient().search(input.project_id, input.query, input.limit);
-      const markdown = ["# Memoria del proyecto (Engram)", "", result.memories].join("\n");
-      return successResult(input.response_format, result, markdown);
+      const result = await new EngramClient().search(
+        input.project_id,
+        input.query,
+        input.limit,
+        input.max_output_bytes,
+      );
+      return toolResult({
+        format: input.response_format,
+        value: result,
+        summary: memorySearchSummary,
+        markdown: (value) => ["# Memoria del proyecto (Engram)", "", value.memories].join("\n"),
+        deduplicated: ({ memories: _memories, ...rest }) => rest,
+      });
     }),
   );
 
@@ -267,6 +340,7 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       description:
         "Guarda o revisa una memoria curada en Engram. topic_key hace idempotentes los reintentos y scope queda fijado a project.",
       inputSchema: SaveProjectMemoryInputSchema.shape,
+      outputSchema: SaveMemoryOutputSchema.shape,
       annotations: persistentWriteAnnotations,
     },
     async (rawInput) => safeToolCall(async () => {
@@ -278,10 +352,26 @@ export function registerTools(server: McpServer, context: ToolContext): void {
         type: input.type,
         topicKey: input.topic_key,
       });
-      const markdown = ["# Memoria guardada (Engram)", "", result.status].join("\n");
-      return successResult(input.response_format, result, markdown);
+      return toolResult({
+        format: input.response_format,
+        value: result,
+        summary: memorySaveSummary,
+        markdown: (value) => ["# Memoria guardada (Engram)", "", value.status].join("\n"),
+      });
     }),
   );
+}
+
+function toDomContext(value: {
+  test_ids?: string[] | undefined;
+  roles?: Array<{ role: string; name: string }> | undefined;
+  labels?: string[] | undefined;
+}): DomContext {
+  return {
+    ...(value.test_ids ? { testIds: value.test_ids } : {}),
+    ...(value.roles ? { roles: value.roles } : {}),
+    ...(value.labels ? { labels: value.labels } : {}),
+  };
 }
 
 async function safeToolCall(action: () => Promise<CallToolResult>): Promise<CallToolResult> {
@@ -296,17 +386,6 @@ async function safeToolCall(action: () => Promise<CallToolResult>): Promise<Call
   }
 }
 
-function successResult(format: ResponseFormat, value: unknown, markdown: string): CallToolResult {
-  const structuredContent = toRecord(value);
-  return {
-    content: [{
-      type: "text",
-      text: format === "json" ? JSON.stringify(value, null, 2) : markdown,
-    }],
-    structuredContent,
-  };
-}
-
 function createClient(context: ToolContext): AiquaaClient {
   return new AiquaaClient({
     ...(context.accessToken ? { accessToken: context.accessToken } : {}),
@@ -315,11 +394,4 @@ function createClient(context: ToolContext): AiquaaClient {
 
 function hasRemoteConfiguration(context: ToolContext): boolean {
   return Boolean(process.env.AIQUAA_API_BASE_URL && (context.accessToken || process.env.AIQUAA_ACCESS_TOKEN));
-}
-
-function toRecord(value: unknown): Record<string, unknown> {
-  const normalized = JSON.parse(JSON.stringify(value)) as unknown;
-  return typeof normalized === "object" && normalized !== null && !Array.isArray(normalized)
-    ? normalized as Record<string, unknown>
-    : { value: normalized };
 }

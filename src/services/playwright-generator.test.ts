@@ -22,6 +22,7 @@ test("genera auth, validación externa y pipelines válidos sin hardcodear crede
     browsers: ["chromium", "firefox"],
     ciTargets: ["github_actions", "azure_pipelines"],
     auth: {
+      mode: "password" as const,
       loginPath: "/login",
       usernameLabel: "Correo",
       passwordLabel: "Contraseña",
@@ -44,7 +45,7 @@ test("genera auth, validación externa y pipelines válidos sin hardcodear crede
   assert.ok(byPath.has("features/support/auth.setup.ts"));
   assert.ok(byPath.has("features/support/notification-helper.ts"));
   assert.match(byPath.get("playwright.config.aiquaa.ts") ?? "", /Desktop Firefox/);
-  assert.match(byPath.get("features/support/auth.setup.ts") ?? "", /Faltan secrets TEST_USER/);
+  assert.match(byPath.get("features/support/auth.setup.ts") ?? "", /Falta el secret TEST_USER/);
   assert.doesNotMatch(byPath.get("features/support/auth.setup.ts") ?? "", /TestPass|testuser@/);
 
   const github = byPath.get(".github/workflows/playwright.yml") ?? "";
