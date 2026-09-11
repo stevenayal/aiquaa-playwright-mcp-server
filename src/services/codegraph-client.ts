@@ -1,5 +1,6 @@
 import path from "node:path";
 import { runCommand, type CommandRunner } from "./command-runner.js";
+import { truncateText } from "./response.js";
 
 export interface CodeGraphContextOptions {
   projectPath: string;
@@ -7,6 +8,7 @@ export interface CodeGraphContextOptions {
   maxNodes: number;
   maxCodeBlocks: number;
   includeCode: boolean;
+  maxOutputBytes: number;
 }
 
 export interface CodeGraphContextResult {
@@ -14,6 +16,7 @@ export interface CodeGraphContextResult {
   projectPath: string;
   task: string;
   context: string;
+  truncated: boolean;
 }
 
 export class CodeGraphClient {
@@ -39,13 +42,14 @@ export class CodeGraphClient {
     ];
     if (!options.includeCode) args.push("--no-code");
 
-    const context = await this.runner({
+    const raw = await this.runner({
       command: this.binary,
       args,
       cwd: projectPath,
       timeoutMs: 45_000,
     });
-    return { provider: "codegraph", projectPath, task: options.task, context };
+    const { text, truncated } = truncateText(raw, options.maxOutputBytes);
+    return { provider: "codegraph", projectPath, task: options.task, context: text, truncated };
   }
 }
 

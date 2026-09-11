@@ -41,7 +41,7 @@ export function generateBdd(
   return {
     requirementSummary: summary,
     suggestedRuleIds: suggestedRules.map((rule) => rule.id),
-    files: [{ path: `features/${fileName}`, language: "gherkin", content: feature }],
+    files: [{ path: `features/${fileName}`, language: "gherkin", content: feature, bytes: feature.length }],
     warnings,
   };
 }

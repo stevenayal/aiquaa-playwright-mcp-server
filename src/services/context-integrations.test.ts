@@ -21,6 +21,7 @@ test("CodeGraph limita rutas y usa argumentos sin shell", async () => {
     maxNodes: 12,
     maxCodeBlocks: 4,
     includeCode: false,
+    maxOutputBytes: 40_000,
   });
   assert.equal(result.context, "# Focused context");
   assert.equal(request?.command, "codegraph-test");
@@ -42,7 +43,7 @@ test("Engram fuerza scope project y topic key idempotente", async () => {
     type: "decision",
     topicKey: "decision/selectors",
   });
-  const found = await client.search("PRJ-123", "selectores", 3);
+  const found = await client.search("PRJ-123", "selectores", 3, 40_000);
 
   assert.equal(saved.project, "tenant-prj-123");
   assert.equal(found.project, "tenant-prj-123");

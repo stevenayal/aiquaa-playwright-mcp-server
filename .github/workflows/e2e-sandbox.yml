@@ -1,0 +1,127 @@
+name: E2E sandbox
+
+# Comprueba de punta a punta que los artefactos que genera qa_pruebas pasan
+# contra una app real (el sandbox público de AIQUAA), sin editarlos a mano.
+#
+# No bloquea PRs: depende de un sitio externo, así que corre a demanda y de
+# noche, y el job de ejecución está marcado como continue-on-error. Lo que sí
+# falla el workflow es que el generador deje steps sin selector verificable.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: URL del sandbox a probar
+        required: false
+        default: https://aiquaa-sandbox-web.vercel.app
+  schedule:
+    - cron: "23 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-sandbox
+  cancel-in-progress: true
+
+env:
+  SANDBOX_BASE_URL: ${{ inputs.base_url || vars.SANDBOX_BASE_URL || 'https://aiquaa-sandbox-web.vercel.app' }}
+
+jobs:
+  generate-and-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: Empaquetar el MCP para instalarlo en la suite generada
+        run: |
+          tarball="$(npm pack --silent)"
+          echo "TARBALL=$PWD/$tarball" >> "$GITHUB_ENV"
+
+      # Si esto falla, el generador dejó un step sin fuente verificable: es un
+      # defecto nuestro y sí debe romper el workflow.
+      - name: Generar la suite con qa_pruebas
+        run: |
+          mkdir -p e2e-workspace
+          node scripts/generate-sandbox-suite.mjs e2e-workspace
+
+      - name: Instalar dependencias de la suite generada
+        working-directory: e2e-workspace
+        run: |
+          npm init -y > /dev/null
+          npm pkg set type=module
+          npm install --no-audit --no-fund -D @playwright/test playwright-bdd "$TARBALL"
+
+      - name: Resolver versión de Playwright
+        id: pw
+        working-directory: e2e-workspace
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cachear browsers de Playwright
+        id: pw-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: Instalar browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        working-directory: e2e-workspace
+        run: npx playwright install --with-deps chromium
+
+      - name: Instalar dependencias de sistema
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        working-directory: e2e-workspace
+        run: npx playwright install-deps chromium
+
+      - name: Verificar que exista el secret de login
+        env:
+          TEST_USER: ${{ secrets.SANDBOX_TEST_USER }}
+        run: |
+          if [ -z "$TEST_USER" ]; then
+            echo "::warning::Falta el secret SANDBOX_TEST_USER (email de un usuario activo del sandbox)."
+            exit 1
+          fi
+
+      - name: Generar specs BDD
+        working-directory: e2e-workspace
+        run: npx bddgen --config playwright.config.aiquaa.ts
+
+      # El único paso tolerante a fallo: acá el que puede estar caído o haber
+      # cambiado es el sandbox, no el generador.
+      - name: Ejecutar Playwright contra el sandbox
+        id: run
+        continue-on-error: true
+        working-directory: e2e-workspace
+        env:
+          BASE_URL: ${{ env.SANDBOX_BASE_URL }}
+          TEST_USER: ${{ secrets.SANDBOX_TEST_USER }}
+        run: npx playwright test --config playwright.config.aiquaa.ts
+
+      - name: Reportar resultado
+        if: ${{ !cancelled() }}
+        run: |
+          if [ "${{ steps.run.outcome }}" = "success" ]; then
+            echo "### E2E sandbox: la suite generada pasó sin ediciones manuales" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### E2E sandbox: la suite generada falló contra $SANDBOX_BASE_URL" >> "$GITHUB_STEP_SUMMARY"
+            echo "Revisá el artifact para ver si cambió la app o si el generador quedó desalineado." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Subir reportes
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: e2e-sandbox-results
+          path: |
+            e2e-workspace/playwright-report/
+            e2e-workspace/test-results/
+            e2e-workspace/features/
+          retention-days: 14

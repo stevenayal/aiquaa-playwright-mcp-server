@@ -1,4 +1,4 @@
-export type ResponseFormat = "markdown" | "json";
+export type ResponseFormat = "summary" | "markdown" | "json";
 
 export interface BusinessRule {
   id: string;
@@ -20,6 +20,8 @@ export interface GeneratedFile {
   path: string;
   language: string;
   content: string;
+  bytes: number;
+  truncated?: boolean;
 }
 
 export interface ScenarioRuleMapping {
@@ -40,7 +42,11 @@ export interface NormalizedTestResult {
 export interface RuleCoverageItem {
   rule: BusinessRule;
   status: "passed" | "failing" | "not_run" | "uncovered";
-  tests: NormalizedTestResult[];
+  testCount: number;
+  /** Solo en `detail: "full"`. */
+  tests?: NormalizedTestResult[];
+  /** Solo en `detail: "summary"`: títulos de hasta 3 tests fallidos. */
+  failedTests?: string[];
 }
 
 export interface CoverageReport {
@@ -54,6 +60,7 @@ export interface CoverageReport {
     uncoveredRules: number;
     coveragePercentage: number;
   };
+  warnings: string[];
   rules: RuleCoverageItem[];
   features: Array<{
     name: string;
