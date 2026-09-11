@@ -49,12 +49,14 @@ export class EngramClient {
 
   async save(options: EngramSaveOptions): Promise<EngramSaveResult> {
     const project = this.projectName(options.projectId);
+    // El contenido va por stdin: hasta 20 000 caracteres no caben de forma
+    // confiable en argv y quedarían visibles en la lista de procesos.
     const status = await this.runner({
       command: this.binary,
       args: [
         "save",
         options.title,
-        options.content,
+        "-",
         "--type",
         options.type,
         "--project",
@@ -64,6 +66,7 @@ export class EngramClient {
         "--topic",
         options.topicKey,
       ],
+      stdin: options.content,
       timeoutMs: 15_000,
     });
     return { provider: "engram", project, topicKey: options.topicKey, status };

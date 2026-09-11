@@ -53,6 +53,7 @@ export const MapScenariosOutputSchema = z.object({
 export const CoverageReportOutputSchema = z.object({
   projectId: z.string(),
   generatedAt: z.string(),
+  warnings: z.array(z.string()),
   summary: loose({ totalRules: z.number(), coveredRules: z.number(), coveragePercentage: z.number() }),
   rules: z.array(loose({ status: z.string(), testCount: z.number() })),
   features: z.array(loose({ name: z.string(), tests: z.number() })),

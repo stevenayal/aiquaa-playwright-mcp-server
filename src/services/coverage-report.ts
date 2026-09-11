@@ -39,6 +39,7 @@ export function buildCoverageReport(
   rules: BusinessRule[],
   tests: NormalizedTestResult[],
   detail: CoverageDetail = "summary",
+  warnings: string[] = [],
 ): CoverageReport {
   const ruleItems: RuleCoverageItem[] = rules.map((rule) => {
     const ruleTests = tests.filter((test) => test.ruleIds.includes(rule.id));
@@ -72,6 +73,7 @@ export function buildCoverageReport(
   return {
     projectId,
     generatedAt: new Date().toISOString(),
+    warnings,
     summary: {
       totalRules: rules.length,
       coveredRules,

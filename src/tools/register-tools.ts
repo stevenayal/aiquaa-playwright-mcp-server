@@ -58,6 +58,9 @@ export interface ToolContext {
   accessToken?: string;
 }
 
+const TRUNCATED_RULES_WARNING =
+  "El catálogo de reglas se truncó por AIQUAA_MAX_RULES/AIQUAA_MAX_PAGES: la cobertura puede estar incompleta.";
+
 const localReadAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
@@ -112,7 +115,9 @@ export function registerTools(server: McpServer, context: ToolContext): void {
       }
       if (hasRemoteConfiguration(context)) {
         try {
-          rules = await createClient(context).getAllBusinessRules(input.project_id);
+          const catalog = await createClient(context).getAllBusinessRulesDetailed(input.project_id);
+          rules = catalog.rules;
+          if (catalog.truncated) warnings.push(TRUNCATED_RULES_WARNING);
         } catch (error: unknown) {
           warnings.push(
             `No fue posible sugerir reglas desde AIQUAA: ${error instanceof Error ? error.message : String(error)}`,
@@ -255,17 +260,25 @@ export function registerTools(server: McpServer, context: ToolContext): void {
     },
     async (rawInput) => safeToolCall(async () => {
       const input = GenerateCoverageReportInputSchema.parse(rawInput);
-      const rules: BusinessRule[] = input.business_rules
-        ? input.business_rules.map((rule) => ({
-            id: rule.id,
-            title: rule.title,
-            description: rule.description,
-            ...(rule.status ? { status: rule.status } : {}),
-            ...(rule.priority ? { priority: rule.priority } : {}),
-          }))
-        : await createClient(context).getAllBusinessRules(input.project_id);
+      const warnings: string[] = [];
+      let rules: BusinessRule[];
+      if (input.business_rules) {
+        rules = input.business_rules.map((rule) => ({
+          id: rule.id,
+          title: rule.title,
+          description: rule.description,
+          ...(rule.status ? { status: rule.status } : {}),
+          ...(rule.priority ? { priority: rule.priority } : {}),
+        }));
+      } else {
+        const catalog = await createClient(context).getAllBusinessRulesDetailed(input.project_id);
+        rules = catalog.rules;
+        // Una regla ausente del catálogo se contaría como cubierta por omisión;
+        // el aviso evita leer la cobertura como si fuera completa.
+        if (catalog.truncated) warnings.push(TRUNCATED_RULES_WARNING);
+      }
       const tests = parsePlaywrightResults(input.playwright_results);
-      const result = buildCoverageReport(input.project_id, rules, tests, input.detail);
+      const result = buildCoverageReport(input.project_id, rules, tests, input.detail, warnings);
       return toolResult({
         format: input.response_format,
         value: result,

@@ -60,6 +60,7 @@ export interface CoverageReport {
     uncoveredRules: number;
     coveragePercentage: number;
   };
+  warnings: string[];
   rules: RuleCoverageItem[];
   features: Array<{
     name: string;
