@@ -17,11 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ github.event.release.tag_name }}
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
+          # Alineado con la matriz de CI: no se publica desde una versión sin probar.
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
@@ -31,4 +32,5 @@ jobs:
         run: test "v$(node -p "require('./package.json').version")" = "$RELEASE_TAG"
       - run: npm ci
       - run: npm test
-      - run: npm publish
+      # --provenance es lo que convierte el id-token en una attestation firmada.
+      - run: npm publish --provenance

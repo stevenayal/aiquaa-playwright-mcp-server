@@ -75,10 +75,48 @@ test("genera auth, validación externa y pipelines válidos sin hardcodear crede
 test("los ejemplos estáticos de GitHub Actions y Azure Pipelines son YAML válido", () => {
   const paths = [
     ".github/workflows/ci.yml",
+    ".github/workflows/codeql.yml",
+    ".github/workflows/e2e-sandbox.yml",
+    ".github/workflows/publish-npm.yml",
+    ".github/workflows/release-please.yml",
+    ".github/dependabot.yml",
     "examples/ci/github-actions-playwright.yml",
     "examples/ci/azure-pipelines-playwright.yml",
   ];
   for (const path of paths) {
     assert.doesNotThrow(() => parseYaml(readFileSync(path, "utf8")), path);
+  }
+});
+
+test("el workflow con sharding es YAML válido y trae el job de merge", () => {
+  const result = generatePlaywrightArtifacts(feature, {
+    shards: 4,
+    ciTargets: ["github_actions"],
+    includeFiles: ["github_actions"],
+  });
+  const workflow = result.files[0]?.content ?? "";
+  const parsed = parseYaml(workflow) as {
+    jobs: Record<string, { strategy?: { matrix?: { shard?: number[] } } }>;
+  };
+  assert.deepEqual(parsed.jobs.test?.strategy?.matrix?.shard, [1, 2, 3, 4]);
+  assert.ok(parsed.jobs["merge-reports"], "con shards hace falta un job que combine los reportes");
+  assert.match(workflow, /--shard=\$\{\{ matrix\.shard \}\}\/4/);
+});
+
+test("los workflows del repo pinean cada action por SHA", () => {
+  const workflows = [
+    ".github/workflows/ci.yml",
+    ".github/workflows/codeql.yml",
+    ".github/workflows/e2e-sandbox.yml",
+    ".github/workflows/publish-npm.yml",
+    ".github/workflows/release-please.yml",
+  ];
+  for (const path of workflows) {
+    const content = readFileSync(path, "utf8");
+    for (const line of content.split(/\r?\n/)) {
+      const match = line.match(/uses:\s+(\S+)/);
+      if (!match?.[1]) continue;
+      assert.match(match[1], /@[0-9a-f]{40}$/, `${path}: ${match[1]} no está pineada por SHA`);
+    }
   }
 });
